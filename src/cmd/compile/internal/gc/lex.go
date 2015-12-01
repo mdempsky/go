@@ -668,18 +668,16 @@ func loadsys() {
 
 	block = 1
 	iota_ = -1000000
+	incannedimport = 1
 
 	importpkg = Runtimepkg
-	cannedimports("runtime.Builtin", runtimeimport)
-	thenewparser.import_package()
-	thenewparser.import_there()
+	Import(obj.Binitr(strings.NewReader(runtimeimport)))
 
 	importpkg = unsafepkg
-	cannedimports("unsafe.o", unsafeimport)
-	thenewparser.import_package()
-	thenewparser.import_there()
+	Import(obj.Binitr(strings.NewReader(unsafeimport)))
 
 	importpkg = nil
+	incannedimport = 0
 }
 
 func fakeimport() {

@@ -3,167 +3,531 @@
 package gc
 
 const runtimeimport = "" +
-	"package runtime safe\n" +
-	"func @\"\".newobject (@\"\".typ·2 *byte) (? *any)\n" +
-	"func @\"\".panicindex ()\n" +
-	"func @\"\".panicslice ()\n" +
-	"func @\"\".panicdivide ()\n" +
-	"func @\"\".throwreturn ()\n" +
-	"func @\"\".throwinit ()\n" +
-	"func @\"\".panicwrap (? string, ? string, ? string)\n" +
-	"func @\"\".gopanic (? interface {})\n" +
-	"func @\"\".gorecover (? *int32) (? interface {})\n" +
-	"func @\"\".printbool (? bool)\n" +
-	"func @\"\".printfloat (? float64)\n" +
-	"func @\"\".printint (? int64)\n" +
-	"func @\"\".printhex (? uint64)\n" +
-	"func @\"\".printuint (? uint64)\n" +
-	"func @\"\".printcomplex (? complex128)\n" +
-	"func @\"\".printstring (? string)\n" +
-	"func @\"\".printpointer (? any)\n" +
-	"func @\"\".printiface (? any)\n" +
-	"func @\"\".printeface (? any)\n" +
-	"func @\"\".printslice (? any)\n" +
-	"func @\"\".printnl ()\n" +
-	"func @\"\".printsp ()\n" +
-	"func @\"\".printlock ()\n" +
-	"func @\"\".printunlock ()\n" +
-	"func @\"\".concatstring2 (? *[32]byte, ? string, ? string) (? string)\n" +
-	"func @\"\".concatstring3 (? *[32]byte, ? string, ? string, ? string) (? string)\n" +
-	"func @\"\".concatstring4 (? *[32]byte, ? string, ? string, ? string, ? string) (? string)\n" +
-	"func @\"\".concatstring5 (? *[32]byte, ? string, ? string, ? string, ? string, ? string) (? string)\n" +
-	"func @\"\".concatstrings (? *[32]byte, ? []string) (? string)\n" +
-	"func @\"\".cmpstring (? string, ? string) (? int)\n" +
-	"func @\"\".eqstring (? string, ? string) (? bool)\n" +
-	"func @\"\".intstring (? *[4]byte, ? int64) (? string)\n" +
-	"func @\"\".slicebytetostring (? *[32]byte, ? []byte) (? string)\n" +
-	"func @\"\".slicebytetostringtmp (? []byte) (? string)\n" +
-	"func @\"\".slicerunetostring (? *[32]byte, ? []rune) (? string)\n" +
-	"func @\"\".stringtoslicebyte (? *[32]byte, ? string) (? []byte)\n" +
-	"func @\"\".stringtoslicebytetmp (? string) (? []byte)\n" +
-	"func @\"\".stringtoslicerune (? *[32]rune, ? string) (? []rune)\n" +
-	"func @\"\".stringiter (? string, ? int) (? int)\n" +
-	"func @\"\".stringiter2 (? string, ? int) (@\"\".retk·1 int, @\"\".retv·2 rune)\n" +
-	"func @\"\".slicecopy (@\"\".to·2 any, @\"\".fr·3 any, @\"\".wid·4 uintptr) (? int)\n" +
-	"func @\"\".slicestringcopy (@\"\".to·2 any, @\"\".fr·3 any) (? int)\n" +
-	"func @\"\".typ2Itab (@\"\".typ·2 *byte, @\"\".typ2·3 *byte, @\"\".cache·4 **byte) (@\"\".ret·1 *byte)\n" +
-	"func @\"\".convI2E (@\"\".elem·2 any) (@\"\".ret·1 any)\n" +
-	"func @\"\".convI2I (@\"\".typ·2 *byte, @\"\".elem·3 any) (@\"\".ret·1 any)\n" +
-	"func @\"\".convT2E (@\"\".typ·2 *byte, @\"\".elem·3 *any, @\"\".buf·4 *any) (@\"\".ret·1 any)\n" +
-	"func @\"\".convT2I (@\"\".typ·2 *byte, @\"\".typ2·3 *byte, @\"\".cache·4 **byte, @\"\".elem·5 *any, @\"\".buf·6 *any) (@\"\".ret·1 any)\n" +
-	"func @\"\".assertE2E (@\"\".typ·1 *byte, @\"\".iface·2 any, @\"\".ret·3 *any)\n" +
-	"func @\"\".assertE2E2 (@\"\".typ·2 *byte, @\"\".iface·3 any, @\"\".ret·4 *any) (? bool)\n" +
-	"func @\"\".assertE2I (@\"\".typ·1 *byte, @\"\".iface·2 any, @\"\".ret·3 *any)\n" +
-	"func @\"\".assertE2I2 (@\"\".typ·2 *byte, @\"\".iface·3 any, @\"\".ret·4 *any) (? bool)\n" +
-	"func @\"\".assertE2T (@\"\".typ·1 *byte, @\"\".iface·2 any, @\"\".ret·3 *any)\n" +
-	"func @\"\".assertE2T2 (@\"\".typ·2 *byte, @\"\".iface·3 any, @\"\".ret·4 *any) (? bool)\n" +
-	"func @\"\".assertI2E (@\"\".typ·1 *byte, @\"\".iface·2 any, @\"\".ret·3 *any)\n" +
-	"func @\"\".assertI2E2 (@\"\".typ·2 *byte, @\"\".iface·3 any, @\"\".ret·4 *any) (? bool)\n" +
-	"func @\"\".assertI2I (@\"\".typ·1 *byte, @\"\".iface·2 any, @\"\".ret·3 *any)\n" +
-	"func @\"\".assertI2I2 (@\"\".typ·2 *byte, @\"\".iface·3 any, @\"\".ret·4 *any) (? bool)\n" +
-	"func @\"\".assertI2T (@\"\".typ·1 *byte, @\"\".iface·2 any, @\"\".ret·3 *any)\n" +
-	"func @\"\".assertI2T2 (@\"\".typ·2 *byte, @\"\".iface·3 any, @\"\".ret·4 *any) (? bool)\n" +
-	"func @\"\".panicdottype (@\"\".have·1 *byte, @\"\".want·2 *byte, @\"\".iface·3 *byte)\n" +
-	"func @\"\".ifaceeq (@\"\".i1·2 any, @\"\".i2·3 any) (@\"\".ret·1 bool)\n" +
-	"func @\"\".efaceeq (@\"\".i1·2 any, @\"\".i2·3 any) (@\"\".ret·1 bool)\n" +
-	"func @\"\".ifacethash (@\"\".i1·2 any) (@\"\".ret·1 uint32)\n" +
-	"func @\"\".efacethash (@\"\".i1·2 any) (@\"\".ret·1 uint32)\n" +
-	"func @\"\".makemap (@\"\".mapType·2 *byte, @\"\".hint·3 int64, @\"\".mapbuf·4 *any, @\"\".bucketbuf·5 *any) (@\"\".hmap·1 map[any]any)\n" +
-	"func @\"\".mapaccess1 (@\"\".mapType·2 *byte, @\"\".hmap·3 map[any]any, @\"\".key·4 *any) (@\"\".val·1 *any)\n" +
-	"func @\"\".mapaccess1_fast32 (@\"\".mapType·2 *byte, @\"\".hmap·3 map[any]any, @\"\".key·4 any) (@\"\".val·1 *any)\n" +
-	"func @\"\".mapaccess1_fast64 (@\"\".mapType·2 *byte, @\"\".hmap·3 map[any]any, @\"\".key·4 any) (@\"\".val·1 *any)\n" +
-	"func @\"\".mapaccess1_faststr (@\"\".mapType·2 *byte, @\"\".hmap·3 map[any]any, @\"\".key·4 any) (@\"\".val·1 *any)\n" +
-	"func @\"\".mapaccess2 (@\"\".mapType·3 *byte, @\"\".hmap·4 map[any]any, @\"\".key·5 *any) (@\"\".val·1 *any, @\"\".pres·2 bool)\n" +
-	"func @\"\".mapaccess2_fast32 (@\"\".mapType·3 *byte, @\"\".hmap·4 map[any]any, @\"\".key·5 any) (@\"\".val·1 *any, @\"\".pres·2 bool)\n" +
-	"func @\"\".mapaccess2_fast64 (@\"\".mapType·3 *byte, @\"\".hmap·4 map[any]any, @\"\".key·5 any) (@\"\".val·1 *any, @\"\".pres·2 bool)\n" +
-	"func @\"\".mapaccess2_faststr (@\"\".mapType·3 *byte, @\"\".hmap·4 map[any]any, @\"\".key·5 any) (@\"\".val·1 *any, @\"\".pres·2 bool)\n" +
-	"func @\"\".mapassign1 (@\"\".mapType·1 *byte, @\"\".hmap·2 map[any]any, @\"\".key·3 *any, @\"\".val·4 *any)\n" +
-	"func @\"\".mapiterinit (@\"\".mapType·1 *byte, @\"\".hmap·2 map[any]any, @\"\".hiter·3 *any)\n" +
-	"func @\"\".mapdelete (@\"\".mapType·1 *byte, @\"\".hmap·2 map[any]any, @\"\".key·3 *any)\n" +
-	"func @\"\".mapiternext (@\"\".hiter·1 *any)\n" +
-	"func @\"\".makechan (@\"\".chanType·2 *byte, @\"\".hint·3 int64) (@\"\".hchan·1 chan any)\n" +
-	"func @\"\".chanrecv1 (@\"\".chanType·1 *byte, @\"\".hchan·2 <-chan any, @\"\".elem·3 *any)\n" +
-	"func @\"\".chanrecv2 (@\"\".chanType·2 *byte, @\"\".hchan·3 <-chan any, @\"\".elem·4 *any) (? bool)\n" +
-	"func @\"\".chansend1 (@\"\".chanType·1 *byte, @\"\".hchan·2 chan<- any, @\"\".elem·3 *any)\n" +
-	"func @\"\".closechan (@\"\".hchan·1 any)\n" +
-	"var @\"\".writeBarrier struct { @\"\".enabled bool; @\"\".needed bool; @\"\".cgo bool }\n" +
-	"func @\"\".writebarrierptr (@\"\".dst·1 *any, @\"\".src·2 any)\n" +
-	"func @\"\".writebarrierstring (@\"\".dst·1 *any, @\"\".src·2 any)\n" +
-	"func @\"\".writebarrierslice (@\"\".dst·1 *any, @\"\".src·2 any)\n" +
-	"func @\"\".writebarrieriface (@\"\".dst·1 *any, @\"\".src·2 any)\n" +
-	"func @\"\".writebarrierfat01 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat10 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat11 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat001 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat010 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat011 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat100 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat101 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat110 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat111 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0001 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0010 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0011 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0100 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0101 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0110 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat0111 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1000 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1001 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1010 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1011 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1100 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1101 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1110 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".writebarrierfat1111 (@\"\".dst·1 *any, _ uintptr, @\"\".src·3 any)\n" +
-	"func @\"\".typedmemmove (@\"\".typ·1 *byte, @\"\".dst·2 *any, @\"\".src·3 *any)\n" +
-	"func @\"\".typedslicecopy (@\"\".typ·2 *byte, @\"\".dst·3 any, @\"\".src·4 any) (? int)\n" +
-	"func @\"\".selectnbsend (@\"\".chanType·2 *byte, @\"\".hchan·3 chan<- any, @\"\".elem·4 *any) (? bool)\n" +
-	"func @\"\".selectnbrecv (@\"\".chanType·2 *byte, @\"\".elem·3 *any, @\"\".hchan·4 <-chan any) (? bool)\n" +
-	"func @\"\".selectnbrecv2 (@\"\".chanType·2 *byte, @\"\".elem·3 *any, @\"\".received·4 *bool, @\"\".hchan·5 <-chan any) (? bool)\n" +
-	"func @\"\".newselect (@\"\".sel·1 *byte, @\"\".selsize·2 int64, @\"\".size·3 int32)\n" +
-	"func @\"\".selectsend (@\"\".sel·2 *byte, @\"\".hchan·3 chan<- any, @\"\".elem·4 *any) (@\"\".selected·1 bool)\n" +
-	"func @\"\".selectrecv (@\"\".sel·2 *byte, @\"\".hchan·3 <-chan any, @\"\".elem·4 *any) (@\"\".selected·1 bool)\n" +
-	"func @\"\".selectrecv2 (@\"\".sel·2 *byte, @\"\".hchan·3 <-chan any, @\"\".elem·4 *any, @\"\".received·5 *bool) (@\"\".selected·1 bool)\n" +
-	"func @\"\".selectdefault (@\"\".sel·2 *byte) (@\"\".selected·1 bool)\n" +
-	"func @\"\".selectgo (@\"\".sel·1 *byte)\n" +
-	"func @\"\".block ()\n" +
-	"func @\"\".makeslice (@\"\".typ·2 *byte, @\"\".nel·3 int64, @\"\".cap·4 int64) (@\"\".ary·1 []any)\n" +
-	"func @\"\".growslice (@\"\".typ·2 *byte, @\"\".old·3 []any, @\"\".cap·4 int) (@\"\".ary·1 []any)\n" +
-	"func @\"\".growslice_n (@\"\".typ·2 *byte, @\"\".old·3 []any, @\"\".n·4 int) (@\"\".ary·1 []any)\n" +
-	"func @\"\".memmove (@\"\".to·1 *any, @\"\".frm·2 *any, @\"\".length·3 uintptr)\n" +
-	"func @\"\".memclr (@\"\".ptr·1 *byte, @\"\".length·2 uintptr)\n" +
-	"func @\"\".memequal (@\"\".x·2 *any, @\"\".y·3 *any, @\"\".size·4 uintptr) (? bool)\n" +
-	"func @\"\".memequal8 (@\"\".x·2 *any, @\"\".y·3 *any) (? bool)\n" +
-	"func @\"\".memequal16 (@\"\".x·2 *any, @\"\".y·3 *any) (? bool)\n" +
-	"func @\"\".memequal32 (@\"\".x·2 *any, @\"\".y·3 *any) (? bool)\n" +
-	"func @\"\".memequal64 (@\"\".x·2 *any, @\"\".y·3 *any) (? bool)\n" +
-	"func @\"\".memequal128 (@\"\".x·2 *any, @\"\".y·3 *any) (? bool)\n" +
-	"func @\"\".int64div (? int64, ? int64) (? int64)\n" +
-	"func @\"\".uint64div (? uint64, ? uint64) (? uint64)\n" +
-	"func @\"\".int64mod (? int64, ? int64) (? int64)\n" +
-	"func @\"\".uint64mod (? uint64, ? uint64) (? uint64)\n" +
-	"func @\"\".float64toint64 (? float64) (? int64)\n" +
-	"func @\"\".float64touint64 (? float64) (? uint64)\n" +
-	"func @\"\".int64tofloat64 (? int64) (? float64)\n" +
-	"func @\"\".uint64tofloat64 (? uint64) (? float64)\n" +
-	"func @\"\".complex128div (@\"\".num·2 complex128, @\"\".den·3 complex128) (@\"\".quo·1 complex128)\n" +
-	"func @\"\".racefuncenter (? uintptr)\n" +
-	"func @\"\".racefuncexit ()\n" +
-	"func @\"\".raceread (? uintptr)\n" +
-	"func @\"\".racewrite (? uintptr)\n" +
-	"func @\"\".racereadrange (@\"\".addr·1 uintptr, @\"\".size·2 uintptr)\n" +
-	"func @\"\".racewriterange (@\"\".addr·1 uintptr, @\"\".size·2 uintptr)\n" +
-	"func @\"\".msanread (@\"\".addr·1 uintptr, @\"\".size·2 uintptr)\n" +
-	"func @\"\".msanwrite (@\"\".addr·1 uintptr, @\"\".size·2 uintptr)\n" +
-	"\n" +
-	"$$\n"
+	"c\x04v0\x01\x0eruntime\x00" +
+	"\bsafe\x00" +
+	"\x02\x18writeBarrier\v\x06\x0eenabled\x00" +
+	"\x00" +
+	"\x00" +
+	"\fneeded\x00" +
+	"\x00" +
+	"\x00" +
+	"\x06cgo\x00" +
+	"\x00" +
+	"\x00" +
+	"\xae\x02\x12assertE2E\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"\r8\x06ret\x00" +
+	"\x00" +
+	"\x01\x14assertE2E2\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12assertE2I\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x00" +
+	"\x01\x14assertE2I2\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12assertE2T\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x00" +
+	"\x01\x14assertE2T2\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12assertI2E\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x00" +
+	"\x01\x14assertI2E2\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12assertI2I\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x00" +
+	"\x01\x14assertI2I2\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12assertI2T\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x00" +
+	"\x01\x14assertI2T2\x0f\x06\r\"\x06typ\x00" +
+	"8\niface\x00" +
+	"@\x06ret\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\nblock\x0f\x00" +
+	"\x00" +
+	"\x01\x12chanrecv1\x0f\x06\r\"\x10chanType\x00" +
+	"\x15\x028\nhchan\x00" +
+	"@\belem\x00" +
+	"\x00" +
+	"\x01\x12chanrecv2\x0f\x06\r\"\x10chanType\x00" +
+	"\x15\x028\nhchan\x00" +
+	"@\belem\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12chansend1\x0f\x06\r\"\x10chanType\x00" +
+	"\x15\x048\nhchan\x00" +
+	"@\belem\x00" +
+	"\x00" +
+	"\x01\x12closechan\x0f\x028\nhchan\x00" +
+	"\x00" +
+	"\x01\x12cmpstring\x0f\x03 \x00" +
+	" \x00" +
+	"\x01\x02\x00" +
+	"\x01\x1acomplex128div\x0f\x04\x1e\x06num\x00" +
+	"\x1e\x06den\x00" +
+	"\x02\x1e\x06quo\x00" +
+	"\x01\x1aconcatstring2\x0f\x05\r\x05@\"\x00" +
+	" \x00" +
+	" \x00" +
+	"\x01 \x00" +
+	"\x01\x1aconcatstring3\x0f\a\r\x05@\"\x00" +
+	" \x00" +
+	" \x00" +
+	" \x00" +
+	"\x01 \x00" +
+	"\x01\x1aconcatstring4\x0f\t\r\x05@\"\x00" +
+	" \x00" +
+	" \x00" +
+	" \x00" +
+	" \x00" +
+	"\x01 \x00" +
+	"\x01\x1aconcatstring5\x0f\v\r\x05@\"\x00" +
+	" \x00" +
+	" \x00" +
+	" \x00" +
+	" \x00" +
+	" \x00" +
+	"\x01 \x00" +
+	"\x01\x1aconcatstrings\x0f\x03\r\x05@\"\x00" +
+	"\a \x00" +
+	"\x01 \x00" +
+	"\x01\x0econvI2E\x0f\x028\belem\x00" +
+	"\x028\x06ret\x00" +
+	"\x01\x0econvI2I\x0f\x04\r\"\x06typ\x00" +
+	"8\belem\x00" +
+	"\x028\x06ret\x00" +
+	"\x01\x0econvT2E\x0f\x06\r\"\x06typ\x00" +
+	"@\belem\x00" +
+	"@\x06buf\x00" +
+	"\x028\x06ret\x00" +
+	"\x01\x0econvT2I\x0f\n\r\"\x06typ\x00" +
+	"\r\"\btyp2\x00" +
+	"\r\r\"\ncache\x00" +
+	"@\belem\x00" +
+	"@\x06buf\x00" +
+	"\x028\x06ret\x00" +
+	"\x01\x0eefaceeq\x0f\x048\x04i1\x00" +
+	"8\x04i2\x00" +
+	"\x02\x00" +
+	"\x06ret\x00" +
+	"\x01\x14efacethash\x0f\x028\x04i1\x00" +
+	"\x02\x12\x06ret\x00" +
+	"\x01\x10eqstring\x0f\x03 \x00" +
+	" \x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x1cfloat64toint64\x0f\x01\x1a\x00" +
+	"\x01\n\x00" +
+	"\x01\x1efloat64touint64\x0f\x01\x1a\x00" +
+	"\x01\x14\x00" +
+	"\x01\x0egopanic\x0f\x01\x11\x00" +
+	"\x00" +
+	"\x00" +
+	"\x00" +
+	"\x01\x12gorecover\x0f\x01\r\b\x00" +
+	"\x01\x11\x00" +
+	"\x00" +
+	"\x00" +
+	"\x01\x12growslice\x0f\x06\r\"\x06typ\x00" +
+	"\a8\x06old\x00" +
+	"\x02\x06cap\x00" +
+	"\x02\a8\x06ary\x00" +
+	"\x01\x16growslice_n\x0f\x06\r\"\x06typ\x00" +
+	"\a8\x06old\x00" +
+	"\x02\x02n\x00" +
+	"\x02\a8\x06ary\x00" +
+	"\x01\x0eifaceeq\x0f\x048\x04i1\x00" +
+	"8\x04i2\x00" +
+	"\x02\x00" +
+	"\x06ret\x00" +
+	"\x01\x14ifacethash\x0f\x028\x04i1\x00" +
+	"\x02\x12\x06ret\x00" +
+	"\x01\x10int64div\x0f\x03\n\x00" +
+	"\n\x00" +
+	"\x01\n\x00" +
+	"\x01\x10int64mod\x0f\x03\n\x00" +
+	"\n\x00" +
+	"\x01\n\x00" +
+	"\x01\x1cint64tofloat64\x0f\x01\n\x00" +
+	"\x01\x1a\x00" +
+	"\x01\x12intstring\x0f\x03\r\x05\b\"\x00" +
+	"\n\x00" +
+	"\x01 \x00" +
+	"\x01\x10makechan\x0f\x04\r\"\x10chanType\x00" +
+	"\n\bhint\x00" +
+	"\x02\x15\x068\nhchan\x00" +
+	"\x01\x0emakemap\x0f\b\r\"\x0emapType\x00" +
+	"\n\bhint\x00" +
+	"@\fmapbuf\x00" +
+	"@\x12bucketbuf\x00" +
+	"\x02\x1388\bhmap\x00" +
+	"\x01\x12makeslice\x0f\x06\r\"\x06typ\x00" +
+	"\n\x06nel\x00" +
+	"\n\x06cap\x00" +
+	"\x02\a8\x06ary\x00" +
+	"\x01\x14mapaccess1\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"@\x06key\x00" +
+	"\x02@\x06val\x00" +
+	"\x01\"mapaccess1_fast32\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"8\x06key\x00" +
+	"\x02@\x06val\x00" +
+	"\x01\"mapaccess1_fast64\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"8\x06key\x00" +
+	"\x02@\x06val\x00" +
+	"\x01|Smapaccess1_faststr\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"8\x06key\x00" +
+	"\x02@\x06val\x00" +
+	"\x01\x14mapaccess2\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"@\x06key\x00" +
+	"\x04@\x06val\x00" +
+	"\x00" +
+	"\bpres\x00" +
+	"\x01\"mapaccess2_fast32\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"8\x06key\x00" +
+	"\x04@\x06val\x00" +
+	"\x00" +
+	"\bpres\x00" +
+	"\x01\"mapaccess2_fast64\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"8\x06key\x00" +
+	"\x04@\x06val\x00" +
+	"\x00" +
+	"\bpres\x00" +
+	"\x01|Smapaccess2_faststr\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"8\x06key\x00" +
+	"\x04@\x06val\x00" +
+	"\x00" +
+	"\bpres\x00" +
+	"\x01\x14mapassign1\x0f\b\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"@\x06key\x00" +
+	"@\x06val\x00" +
+	"\x00" +
+	"\x01\x12mapdelete\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"@\x06key\x00" +
+	"\x00" +
+	"\x01\x16mapiterinit\x0f\x06\r\"\x0emapType\x00" +
+	"\x1388\bhmap\x00" +
+	"@\nhiter\x00" +
+	"\x00" +
+	"\x01\x16mapiternext\x0f\x02@\nhiter\x00" +
+	"\x00" +
+	"\x01\fmemclr\x0f\x04\r\"\x06ptr\x00" +
+	"\x16\flength\x1cunsafe-uintptr\x00" +
+	"\x01\x10memequal\x0f\x06@\x02x\x00" +
+	"@\x02y\x00" +
+	"\x16\bsize\x1cunsafe-uintptr\x01\x00" +
+	"\x00" +
+	"\x01\x16memequal128\x0f\x04@\x02x\x00" +
+	"@\x02y\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x14memequal16\x0f\x04@\x02x\x00" +
+	"@\x02y\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x14memequal32\x0f\x04@\x02x\x00" +
+	"@\x02y\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x14memequal64\x0f\x04@\x02x\x00" +
+	"@\x02y\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x12memequal8\x0f\x04@\x02x\x00" +
+	"@\x02y\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x0ememmove\x0f\x06@\x04to\x00" +
+	"@\x06frm\x00" +
+	"\x16\flength\x1cunsafe-uintptr\x00" +
+	"\x01\x10msanread\x0f\x04\x16\baddr\x1cunsafe-uintptr\x16\bsize\x1cunsafe-uintptr\x00" +
+	"\x01\x12msanwrite\x0f\x04\x16\baddr\x1cunsafe-uintptr\x16\bsize\x1cunsafe-uintptr\x00" +
+	"\x01\x12newobject\x0f\x02\r\"\x06typ\x00" +
+	"\x01@\x00" +
+	"\x01\x12newselect\x0f\x06\r\"\x06sel\x00" +
+	"\n\x0eselsize\x00" +
+	"\b\bsize\x00" +
+	"\x00" +
+	"\x01\x16panicdivide\x0f\x00" +
+	"\x00" +
+	"\x01\x18panicdottype\x0f\x06\r\"\bhave\x00" +
+	"\xe8\x02\bwant\x00" +
+	"\xe8\x02\niface\x00" +
+	"\x00" +
+	"\x01\x14panicindex\x0f\x00" +
+	"\x00" +
+	"\x01\x14panicslice\x0f\x00" +
+	"\x00" +
+	"\x01\x12panicwrap\x0f\x05 \x00" +
+	" \x00" +
+	" \x00" +
+	"\x00" +
+	"\x01\x12printbool\x0f\x01\x00" +
+	"\x00" +
+	"\x00" +
+	"\x01\x18printcomplex\x0f\x01\x1e\x00" +
+	"\x00" +
+	"\x01\x14printeface\x0f\x018\x00" +
+	"\x00" +
+	"\x01\x14printfloat\x0f\x01\x1a\x00" +
+	"\x00" +
+	"\x01\x10printhex\x0f\x01\x14\x00" +
+	"\x00" +
+	"\x01\x14printiface\x0f\x018\x00" +
+	"\x00" +
+	"\x01\x10printint\x0f\x01\n\x00" +
+	"\x00" +
+	"\x01\x12printlock\x0f\x00" +
+	"\x00" +
+	"\x01\x0eprintnl\x0f\x00" +
+	"\x00" +
+	"\x01\x18printpointer\x0f\x018\x00" +
+	"\x00" +
+	"\x01\x14printslice\x0f\x018\x00" +
+	"\x00" +
+	"\x01\x0eprintsp\x0f\x00" +
+	"\x00" +
+	"\x01\x16printstring\x0f\x01 \x00" +
+	"\x00" +
+	"\x01\x12printuint\x0f\x01\x14\x00" +
+	"\x00" +
+	"\x01\x16printunlock\x0f\x00" +
+	"\x00" +
+	"\x01\x1aracefuncenter\x0f\x01\x16\x1cunsafe-uintptr\x00" +
+	"\x01\x18racefuncexit\x0f\x00" +
+	"\x00" +
+	"\x01\x10raceread\x0f\x01\x16\x1cunsafe-uintptr\x00" +
+	"\x01\x1aracereadrange\x0f\x04\x16\baddr\x1cunsafe-uintptr\x16\bsize\x1cunsafe-uintptr\x00" +
+	"\x01\x12racewrite\x0f\x01\x16\x1cunsafe-uintptr\x00" +
+	"\x01\x1cracewriterange\x0f\x04\x16\baddr\x1cunsafe-uintptr\x16\bsize\x1cunsafe-uintptr\x00" +
+	"\x01\x1aselectdefault\x0f\x02\r\"\x06sel\x00" +
+	"\x02\x00" +
+	"\x10selected\x00" +
+	"\x01\x10selectgo\x0f\x02\r\"\x06sel\x00" +
+	"\x00" +
+	"\x01\x18selectnbrecv\x0f\x06\r\"\x10chanType\x00" +
+	"@\belem\x00" +
+	"\x15\x028\nhchan\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x1aselectnbrecv2\x0f\b\r\"\x10chanType\x00" +
+	"@\belem\x00" +
+	"\r\x00" +
+	"\x10received\x00" +
+	"\x15\x028\nhchan\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x18selectnbsend\x0f\x06\r\"\x10chanType\x00" +
+	"\x15\x048\nhchan\x00" +
+	"@\belem\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\x01\x14selectrecv\x0f\x06\r\"\x06sel\x00" +
+	"\x15\x028\nhchan\x00" +
+	"@\belem\x00" +
+	"\x02\x00" +
+	"\x10selected\x00" +
+	"\x01\x16selectrecv2\x0f\b\r\"\x06sel\x00" +
+	"\x15\x028\nhchan\x00" +
+	"@\belem\x00" +
+	"\xac\x03\x10received\x00" +
+	"\x02\x00" +
+	"\x10selected\x00" +
+	"\x01\x14selectsend\x0f\x06\r\"\x06sel\x00" +
+	"\x15\x048\nhchan\x00" +
+	"@\belem\x00" +
+	"\x02\x00" +
+	"\x10selected\x00" +
+	"\x01\"slicebytetostring\x0f\x03\r\x05@\"\x00" +
+	"\a\"\x00" +
+	"\x01 \x00" +
+	"\x01(slicebytetostringtmp\x0f\x01\a\"\x00" +
+	"\x01 \x00" +
+	"\x01\x12slicecopy\x0f\x068\x04to\x00" +
+	"8\x04fr\x00" +
+	"\x16\x06wid\x1cunsafe-uintptr\x01\x02\x00" +
+	"\x01\"slicerunetostring\x0f\x03\r\x05@\"\x00" +
+	"\a|S\x00" +
+	"\x01 \x00" +
+	"\x01\x1eslicestringcopy\x0f\x048\x04to\x00" +
+	"8\x04fr\x00" +
+	"\x01\x02\x00" +
+	"\x01\x14stringiter\x0f\x03 \x00" +
+	"\x02\x00" +
+	"\x01\x02\x00" +
+	"\x01\x16stringiter2\x0f\x03 \x00" +
+	"\x02\x00" +
+	"\x04\x02\bretk\x00" +
+	"|S\bretv\x00" +
+	"\x01\"stringtoslicebyte\x0f\x03\r\x05@\"\x00" +
+	" \x00" +
+	"\x01\a\"\x00" +
+	"\x01(stringtoslicebytetmp\x0f\x01 \x00" +
+	"\x01\a\"\x00" +
+	"\x01\"stringtoslicerune\x0f\x03\r\x05@|S\x00" +
+	" \x00" +
+	"\x01\a|S\x00" +
+	"\x01\x12throwinit\x0f\x00" +
+	"\x00" +
+	"\x01\x16throwreturn\x0f\x00" +
+	"\x00" +
+	"\x01\x10typ2Itab\x0f\x06\r\"\x06typ\x00" +
+	"\r\"\btyp2\x00" +
+	"\r\r\"\ncache\x00" +
+	"\x02\r\"\x06ret\x00" +
+	"\x01\x18typedmemmove\x0f\x06\r\"\x06typ\x00" +
+	"@\x06dst\x00" +
+	"@\x06src\x00" +
+	"\x00" +
+	"\x01\x1ctypedslicecopy\x0f\x06\r\"\x06typ\x00" +
+	"8\x06dst\x00" +
+	"8\x06src\x00" +
+	"\x01\x02\x00" +
+	"\x01\x12uint64div\x0f\x03\x14\x00" +
+	"\x14\x00" +
+	"\x01\x14\x00" +
+	"\x01\x12uint64mod\x0f\x03\x14\x00" +
+	"\x14\x00" +
+	"\x01\x14\x00" +
+	"\x01\x1euint64tofloat64\x0f\x01\x14\x00" +
+	"\x01\x1a\x00" +
+	"\x01&writebarrierfat0001\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat001\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat0010\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat0011\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01\"writebarrierfat01\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat010\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat0100\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat0101\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat011\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat0110\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat0111\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01\"writebarrierfat10\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat100\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1000\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1001\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat101\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1010\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1011\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01\"writebarrierfat11\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat110\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1100\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1101\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierfat111\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1110\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01&writebarrierfat1111\x0f\x06@\x06dst\x00" +
+	"\x16\x02_\x1cunsafe-uintptr8\x06src\x00" +
+	"\x00" +
+	"\x01\"writebarrieriface\x0f\x04@\x06dst\x00" +
+	"8\x06src\x00" +
+	"\x00" +
+	"\x01\x1ewritebarrierptr\x0f\x04@\x06dst\x00" +
+	"8\x06src\x00" +
+	"\x00" +
+	"\x01\"writebarrierslice\x0f\x04@\x06dst\x00" +
+	"8\x06src\x00" +
+	"\x00" +
+	"\x01|Swritebarrierstring\x0f\x04@\x06dst\x00" +
+	"8\x06src\x00" +
+	"\x00" +
+	"\x01\x00" +
+	"\x00" +
+	"\n$$\n"
 
 const unsafeimport = "" +
-	"package unsafe\n" +
-	"type @\"\".Pointer uintptr\n" +
-	"func @\"\".Offsetof (? any) (? uintptr)\n" +
-	"func @\"\".Sizeof (? any) (? uintptr)\n" +
-	"func @\"\".Alignof (? any) (? uintptr)\n" +
-	"\n" +
-	"$$\n"
+	"c\x04v0\x01\funsafe\x00" +
+	"\x00" +
+	"\x00" +
+	"\x00" +
+	"\x06\x0eAlignof\x0f\x018\x00" +
+	"\x01\x16\x00" +
+	"\x01\x10Offsetof\x0f\x018\x00" +
+	"\x01\x16\x00" +
+	"\x01\fSizeof\x0f\x018\x00" +
+	"\x01\x16\x00" +
+	"\x01\x02\x03\x0ePointer\x00" +
+	"\x16\x00" +
+	"\x00" +
+	"\n$$\n"
