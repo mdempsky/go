@@ -26,7 +26,7 @@ const trace = false // if set, parse tracing can be enabled with -x
 var thenewparser parser // the parser in use
 var savedstate []parser // saved parser state, used during import
 
-func push_parser() {
+func parse_import() {
 	// Indentation (for tracing) must be preserved across parsers
 	// since we are changing the lexer source (and parser state)
 	// under foot, in the middle of productions. This won't be
@@ -38,6 +38,8 @@ func push_parser() {
 	savedstate = append(savedstate, thenewparser)
 	thenewparser = parser{indent: indent} // preserve indentation
 	thenewparser.next()
+	thenewparser.import_package()
+	thenewparser.import_there()
 }
 
 func pop_parser() {
@@ -364,22 +366,17 @@ func (p *parser) import_spec() {
 	p.next()
 
 	importfile(&path)
-	if p.tok != LPACKAGE {
-		// When an invalid import path is passed to importfile,
-		// it calls Yyerror and then sets up a fake import with
-		// no package statement. This allows us to test more
-		// than one invalid import statement in a single file.
-		p.import_there()
+	if importpkg == nil {
 		if nerrors == 0 {
 			Fatalf("phase error in import")
 		}
 		return
 	}
-	p.import_package()
-	p.import_there()
 
 	ipkg := importpkg
 	importpkg = nil
+
+	ipkg.Direct = true
 
 	if my == nil {
 		my = Lookup(ipkg.Name)
@@ -442,14 +439,7 @@ func (p *parser) import_package() {
 	} else if importpkg.Name != name {
 		Yyerror("conflicting names %s and %s for package %q", importpkg.Name, name, importpkg.Path)
 	}
-	if incannedimport == 0 {
-		importpkg.Direct = true
-	}
 	importpkg.Safe = importsafe
-
-	if safemode != 0 && !importsafe {
-		Yyerror("cannot import unsafe package %q", importpkg.Path)
-	}
 }
 
 // import_there parses the imported package definitions and then switches
