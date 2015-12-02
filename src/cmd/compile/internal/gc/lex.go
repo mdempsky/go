@@ -320,22 +320,15 @@ func Main() {
 
 		linehistpush(infile)
 
-		var err error
-		curio.bin, err = obj.Bopenr(infile)
+		bin, err := obj.Bopenr(infile)
 		if err != nil {
 			fmt.Printf("open %s: %v\n", infile, err)
 			errorexit()
 		}
 
-		curio.peekc = 0
-		curio.peekc1 = 0
-		curio.nlsemi = false
-		curio.eofnl = false
-		curio.last = 0
-
 		// Skip initial BOM if present.
-		if obj.Bgetrune(curio.bin) != BOM {
-			obj.Bungetrune(curio.bin)
+		if obj.Bgetrune(bin) != BOM {
+			obj.Bungetrune(bin)
 		}
 
 		block = 1
@@ -343,15 +336,13 @@ func Main() {
 
 		imported_unsafe = false
 
-		parse_file()
+		parse_file(bin)
 		if nsyntaxerrors != 0 {
 			errorexit()
 		}
 
 		linehistpop()
-		if curio.bin != nil {
-			obj.Bterm(curio.bin)
-		}
+		obj.Bterm(bin)
 	}
 
 	testdclstack()
@@ -820,15 +811,7 @@ func importfile(f *Val) {
 	switch c {
 	case '\n':
 		// old export format
-		pushedio = curio
-
-		curio.bin = imp
-		curio.peekc = 0
-		curio.peekc1 = 0
-		curio.nlsemi = false
-		typecheckok = true
-
-		parse_import()
+		parse_import(imp)
 
 	case 'B':
 		// new export format
@@ -843,16 +826,6 @@ func importfile(f *Val) {
 	if safemode != 0 && !importpkg.Safe {
 		Yyerror("cannot import unsafe package %q", importpkg.Path)
 	}
-}
-
-func unimportfile() {
-	pop_parser()
-
-	curio = pushedio
-
-	pushedio.bin = nil
-	incannedimport = 0
-	typecheckok = false
 }
 
 func isSpace(c int) bool {
@@ -1928,7 +1901,7 @@ check:
 		fallthrough
 
 	case '\n':
-		if pushedio.bin == nil {
+		if importpkg == nil {
 			lexlineno++
 		}
 	}
@@ -1940,7 +1913,7 @@ check:
 func ungetc(c int) {
 	curio.peekc1 = curio.peekc
 	curio.peekc = c
-	if c == '\n' && pushedio.bin == nil {
+	if c == '\n' && importpkg == nil {
 		lexlineno--
 	}
 }

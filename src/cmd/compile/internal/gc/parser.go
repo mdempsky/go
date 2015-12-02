@@ -13,6 +13,7 @@ package gc
 // to handle optional commas and semicolons before a closing ) or } .
 
 import (
+	"cmd/internal/obj"
 	"fmt"
 	"strconv"
 	"strings"
@@ -20,13 +21,14 @@ import (
 
 const trace = false // if set, parse tracing can be enabled with -x
 
-// TODO(gri) Once we handle imports w/o redirecting the underlying
-// source of the lexer we can get rid of these. They are here for
-// compatibility with the existing yacc-based parser setup (issue 13242).
-var thenewparser parser // the parser in use
-var savedstate []parser // saved parser state, used during import
+// TODO(gri) Once we stop parsing import data we can get rid of this (issue 13242).
+var fileparser parser // the Go source file parser in use
 
-func parse_import() {
+func parse_import(bin *obj.Biobuf) {
+	pushedio := curio
+	curio = Io{bin: bin}
+	typecheckok = true
+
 	// Indentation (for tracing) must be preserved across parsers
 	// since we are changing the lexer source (and parser state)
 	// under foot, in the middle of productions. This won't be
@@ -34,27 +36,23 @@ func parse_import() {
 	// be the push/pop_parser functionality.
 	// (Instead we could just use a global variable indent, but
 	// but eventually indent should be parser-specific anyway.)
-	indent := thenewparser.indent
-	savedstate = append(savedstate, thenewparser)
-	thenewparser = parser{indent: indent} // preserve indentation
-	thenewparser.next()
-	thenewparser.import_package()
-	thenewparser.import_there()
-}
 
-func pop_parser() {
-	indent := thenewparser.indent
-	n := len(savedstate) - 1
-	thenewparser = savedstate[n]
-	thenewparser.indent = indent // preserve indentation
-	savedstate = savedstate[:n]
+	importparser := parser{indent: fileparser.indent} // preserve indentation
+	importparser.next()
+	importparser.import_package()
+	importparser.import_there()
+
+	curio = pushedio
+	typecheckok = false
 }
 
 // parse_file sets up a new parser and parses a single Go source file.
-func parse_file() {
-	thenewparser = parser{}
-	thenewparser.next()
-	thenewparser.file()
+func parse_file(bin *obj.Biobuf) {
+	curio = Io{bin: bin}
+
+	fileparser = parser{}
+	fileparser.next()
+	fileparser.file()
 }
 
 type parser struct {
@@ -459,7 +457,6 @@ func (p *parser) import_there() {
 	}
 
 	resumecheckwidth()
-	unimportfile()
 }
 
 // Declaration = ConstDecl | TypeDecl | VarDecl .
