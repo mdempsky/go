@@ -321,6 +321,18 @@ func newliveness(fn *Node, ptxt *obj.Prog, vars []*Node, f *ssa.Func, valueProgs
 		}
 	}
 
+	// Select statements are implemented with a setjmp / longjmp
+	// mechanism: the select{send,recv,recv2,default} functions
+	// are analogous to setjmp, and selectgo is analogous to
+	// longjmp.
+	//
+	// In the SSA CFG, selectgo is represented as a function call
+	// that never returns. A naive analysis would erroneously
+	// infer that all local variables are dead at selectgo. To
+	// correct that, we construct a new CFG that also includes
+	// edges from selectgo calls to their corresponding selectfoo
+	// calls' case body block.
+
 	if newselect == nil {
 		newselect = Linksym(Pkglookup("newselect", Runtimepkg))
 		selectNames[0] = Linksym(Pkglookup("selectsend", Runtimepkg))
@@ -421,14 +433,6 @@ func printvars(name string, bv bvec, vars []*Node) {
 		}
 	}
 	fmt.Printf("\n")
-}
-
-func (lv *Liveness) slice2bvec(vars []int32) bvec {
-	bv := bvalloc(int32(len(lv.vars)))
-	for _, id := range vars {
-		bv.Set(id)
-	}
-	return bv
 }
 
 func checkauto(fn *Node, p *obj.Prog, n *Node) {
