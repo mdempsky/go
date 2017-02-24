@@ -16,6 +16,7 @@
 package gc
 
 import (
+	"bytes"
 	"cmd/compile/internal/ssa"
 	"cmd/internal/obj"
 	"cmd/internal/sys"
@@ -1333,21 +1334,9 @@ func livenessepilogue(lv *Liveness) {
 		bb.lastbitmapindex = len(lv.livepointers) - 1
 	}
 
-	var msg []string
-	var nmsg, startmsg int
 	for _, bb := range lv.cfg {
-		if debuglive >= 1 && Curfn.Func.Nname.Sym.Name != "init" && Curfn.Func.Nname.Sym.Name[0] != '.' {
-			nmsg = len(lv.livepointers)
-			startmsg = nmsg
-			msg = make([]string, nmsg)
-			for j := 0; j < nmsg; j++ {
-				msg[j] = ""
-			}
-		}
-
 		// walk backward, emit pcdata and populate the maps
 		pos := int32(bb.lastbitmapindex)
-
 		if pos < 0 {
 			// the first block we encounter should have the ATEXT so
 			// at no point should pos ever be less than zero.
@@ -1359,7 +1348,7 @@ func livenessepilogue(lv *Liveness) {
 		for p := bb.last; p != nil; p = next {
 			next = p.Opt.(*obj.Prog) // splicebefore modifies p.opt
 
-			if issafepoint(p) {
+			if p.As == obj.ACALL {
 				// Found an interesting instruction, record the
 				// corresponding liveness information.
 
@@ -1369,68 +1358,26 @@ func livenessepilogue(lv *Liveness) {
 				onebitlivepointermap(lv, liveout, lv.vars, args, locals)
 
 				// Mark pparamout variables (as described above)
-				if p.As == obj.ACALL {
-					args.Or(args, outLive)
-					locals.Or(locals, outLiveHeap)
-				}
+				args.Or(args, outLive)
+				locals.Or(locals, outLiveHeap)
 
-				// Show live pointer bitmaps.
-				// We're interpreting the args and locals bitmap instead of liveout so that we
-				// include the bits added by the avarinit logic in the
-				// previous loop.
-				if msg != nil {
-					fmt_ := fmt.Sprintf("%v: live at ", p.Line())
-					if p.As == obj.ACALL && p.To.Sym != nil {
-						name := p.To.Sym.Name
-						i := strings.Index(name, ".")
-						if i >= 0 {
-							name = name[i+1:]
-						}
-						fmt_ += fmt.Sprintf("call to %s:", name)
-					} else if p.As == obj.ACALL {
-						fmt_ += "indirect call:"
-					} else {
-						fmt_ += fmt.Sprintf("entry to %s:", ((p.From.Node).(*Node)).Sym.Name)
-					}
-					numlive := 0
-					for j := 0; j < len(lv.vars); j++ {
-						n := lv.vars[j]
-						if islive(n, args, locals) {
-							fmt_ += fmt.Sprintf(" %v", n)
-							numlive++
-						}
-					}
-
-					fmt_ += "\n"
-					if numlive == 0 { // squelch message
-
-					} else {
-						startmsg--
-						msg[startmsg] = fmt_
-					}
-				}
-
-				// Only CALL instructions need a PCDATA annotation.
-				// The TEXT instruction annotation is implicit.
-				if p.As == obj.ACALL {
-					before := p
-					if isdeferreturn(p) {
-						// runtime.deferreturn modifies its return address to return
-						// back to the CALL, not to the subsequent instruction.
-						// Because the return comes back one instruction early,
-						// the PCDATA must begin one instruction early too.
-						// The instruction before a call to deferreturn is always a
-						// no-op, to keep PC-specific data unambiguous.
+				before := p
+				if isdeferreturn(p) {
+					// runtime.deferreturn modifies its return address to return
+					// back to the CALL, not to the subsequent instruction.
+					// Because the return comes back one instruction early,
+					// the PCDATA must begin one instruction early too.
+					// The instruction before a call to deferreturn is always a
+					// no-op, to keep PC-specific data unambiguous.
+					before = before.Opt.(*obj.Prog)
+					if Ctxt.Arch.Family == sys.PPC64 {
+						// On ppc64 there is an additional instruction
+						// (another no-op or reload of toc pointer) before
+						// the call.
 						before = before.Opt.(*obj.Prog)
-						if Ctxt.Arch.Family == sys.PPC64 {
-							// On ppc64 there is an additional instruction
-							// (another no-op or reload of toc pointer) before
-							// the call.
-							before = before.Opt.(*obj.Prog)
-						}
 					}
-					splicebefore(lv, bb, newpcdataprog(before, pos), before)
 				}
+				splicebefore(lv, bb, newpcdataprog(before, pos), before)
 
 				pos--
 			}
@@ -1473,16 +1420,15 @@ func livenessepilogue(lv *Liveness) {
 			}
 		}
 
-		if msg != nil {
-			for j := startmsg; j < nmsg; j++ {
-				if msg[j] != "" {
-					fmt.Printf("%s", msg[j])
-				}
+		if bb == lv.cfg[0] {
+			if pos != 0 {
+				Fatalf("oops")
 			}
 
-			msg = nil
-			nmsg = 0
-			startmsg = 0
+			// Record live pointers.
+			args := lv.argslivepointers[pos]
+			locals := lv.livepointers[pos]
+			onebitlivepointermap(lv, liveout, lv.vars, args, locals)
 		}
 	}
 
@@ -1589,11 +1535,43 @@ func livenesscompact(lv *Liveness) {
 	}
 
 	// Rewrite PCDATA instructions to use new numbering.
+	var last int
 	for p := lv.ptxt; p != nil; p = p.Link {
 		if p.As == obj.APCDATA && p.From.Offset == obj.PCDATA_StackMapIndex {
-			i := p.To.Offset
-			if i >= 0 {
-				p.To.Offset = int64(remap[i])
+			last = remap[p.To.Offset]
+			p.To.Offset = int64(last)
+		}
+
+		// Show live pointer bitmaps.
+		// We're interpreting the args and locals bitmap instead of liveout so that we
+		// include the bits added by the avarinit logic in the
+		// previous loop.
+		if debuglive >= 1 && Curfn.Func.Nname.Sym.Name != "init" && Curfn.Func.Nname.Sym.Name[0] != '.' && (p.As == obj.ATEXT || p.As == obj.ACALL) && last >= 0 {
+			var buf bytes.Buffer
+
+			fmt.Fprintf(&buf, "%v: live at ", p.Line())
+			if p.As == obj.ACALL && p.To.Sym != nil {
+				name := p.To.Sym.Name
+				i := strings.Index(name, ".")
+				if i >= 0 {
+					name = name[i+1:]
+				}
+				fmt.Fprintf(&buf, "call to %s:", name)
+			} else if p.As == obj.ACALL {
+				buf.WriteString("indirect call:")
+			} else {
+				fmt.Fprintf(&buf, "entry to %s:", ((p.From.Node).(*Node)).Sym.Name)
+			}
+			args, locals := lv.argslivepointers[last], lv.livepointers[last]
+			anylive := false
+			for _, n := range lv.vars {
+				if islive(n, args, locals) {
+					fmt.Fprintf(&buf, " %v", n)
+					anylive = true
+				}
+			}
+			if anylive {
+				fmt.Println(buf.String())
 			}
 		}
 	}
