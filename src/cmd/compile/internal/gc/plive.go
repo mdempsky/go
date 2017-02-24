@@ -106,7 +106,6 @@ type Liveness struct {
 type progeffectscache struct {
 	tailuevar    []int32
 	retuevar     []int32
-	textvarkill  []int32
 	textavarinit []int32
 	uevar        [3]int32
 	varkill      [3]int32
@@ -578,7 +577,6 @@ func (lv *Liveness) initcache() {
 			if node.Addrtaken {
 				lv.cache.textavarinit = append(lv.cache.textavarinit, int32(i))
 			}
-			lv.cache.textvarkill = append(lv.cache.textvarkill, int32(i))
 
 		case PPARAMOUT:
 			// If the result had its address taken, it is being tracked
@@ -613,12 +611,6 @@ func (lv *Liveness) progeffects(prog *obj.Prog) (uevar, varkill, avarinit []int3
 	if !lv.cache.initialized {
 		Fatalf("liveness progeffects cache not initialized")
 		return
-	}
-
-	if prog.As == obj.ATEXT {
-		// A text instruction marks the entry point to a function and
-		// the definition point of all in arguments.
-		return nil, lv.cache.textvarkill, lv.cache.textavarinit
 	}
 
 	uevar = lv.cache.uevar[:0]
@@ -1135,16 +1127,20 @@ func livenesssolve(lv *Liveness) {
 }
 
 func (lv *Liveness) entryvarinit(bb *BasicBlock, any, all bvec) {
-	any.Clear()
-	all.Clear()
-	for j, pred := range bb.pred {
-		if j == 0 {
-			any.Copy(pred.avarinitany)
-			all.Copy(pred.avarinitall)
-		} else {
-			any.Or(any, pred.avarinitany)
-			all.And(all, pred.avarinitall)
+	if len(bb.pred) == 0 {
+		any.Clear()
+		for _, pos := range lv.cache.textavarinit {
+			any.Set(pos)
 		}
+		all.Copy(any)
+		return
+	}
+
+	any.Copy(bb.pred[0].avarinitany)
+	all.Copy(bb.pred[0].avarinitall)
+	for _, pred := range bb.pred[1:] {
+		any.Or(any, pred.avarinitany)
+		all.And(all, pred.avarinitall)
 	}
 }
 
