@@ -16,6 +16,7 @@
 package gc
 
 import (
+	"cmd/compile/internal/ssa"
 	"cmd/internal/obj"
 	"cmd/internal/sys"
 	"crypto/md5"
@@ -89,6 +90,10 @@ type Liveness struct {
 	ptxt *obj.Prog
 	vars []*Node
 	cfg  []*BasicBlock
+
+	f          *ssa.Func
+	valueProgs map[*obj.Prog]*ssa.Value
+	blockProgs map[*obj.Prog]*ssa.Block
 
 	// An array with a bit vector for each safe point tracking live pointers
 	// in the arguments and locals area, indexed by bb.rpo.
@@ -639,71 +644,22 @@ func (lv *Liveness) progeffects(prog *obj.Prog) (uevar, varkill, avarinit []int3
 	varkill = lv.cache.varkill[:0]
 	avarinit = lv.cache.avarinit[:0]
 
-	info := Thearch.Proginfo(prog)
-
-	if info.Flags&(LeftRead|LeftWrite|LeftAddr) != 0 {
-		from := &prog.From
-		if from.Node != nil && from.Sym != nil {
-			n := from.Node.(*Node)
-			if pos := liveIndex(n, lv.vars); pos >= 0 {
-				if n.Addrtaken {
-					avarinit = append(avarinit, pos)
-				} else {
-					if info.Flags&(LeftRead|LeftAddr) != 0 {
-						uevar = append(uevar, pos)
-					}
-					if info.Flags&LeftWrite != 0 && !isfat(n.Type) {
-						varkill = append(varkill, pos)
-					}
-				}
+	v := lv.valueProgs[prog]
+	n, flags := valueEffect(v)
+	if pos := liveIndex(n, lv.vars); pos >= 0 {
+		if n.Addrtaken {
+			if v.Op != ssa.OpVarKill {
+				avarinit = append(avarinit, pos)
 			}
-		}
-	}
-
-	if info.Flags&From3Read != 0 {
-		from := prog.From3
-		if from.Node != nil && from.Sym != nil {
-			n := from.Node.(*Node)
-			if pos := liveIndex(n, lv.vars); pos >= 0 {
-				if n.Addrtaken {
-					avarinit = append(avarinit, pos)
-				} else {
-					uevar = append(uevar, pos)
-				}
+			if v.Op == ssa.OpVarDef || v.Op == ssa.OpVarKill {
+				varkill = append(varkill, pos)
 			}
-		}
-	}
-
-	if info.Flags&(RightRead|RightWrite|RightAddr) != 0 {
-		to := &prog.To
-		if to.Node != nil && to.Sym != nil {
-			n := to.Node.(*Node)
-			if pos := liveIndex(n, lv.vars); pos >= 0 {
-				if n.Addrtaken {
-					if prog.As != obj.AVARKILL {
-						avarinit = append(avarinit, pos)
-					}
-					if prog.As == obj.AVARDEF || prog.As == obj.AVARKILL {
-						varkill = append(varkill, pos)
-					}
-				} else {
-					// RightRead is a read, obviously.
-					// RightAddr by itself is also implicitly a read.
-					//
-					// RightAddr|RightWrite means that the address is being taken
-					// but only so that the instruction can write to the value.
-					// It is not a read. It is equivalent to RightWrite except that
-					// having the RightAddr bit set keeps the registerizer from
-					// trying to substitute a register for the memory location.
-					if (info.Flags&RightRead != 0) || info.Flags&(RightAddr|RightWrite) == RightAddr {
-						uevar = append(uevar, pos)
-					}
-					if info.Flags&RightWrite != 0 {
-						if !isfat(n.Type) || prog.As == obj.AVARDEF {
-							varkill = append(varkill, pos)
-						}
-					}
-				}
+		} else {
+			if flags&MemRead != 0 {
+				uevar = append(uevar, pos)
+			}
+			if flags&MemWrite != 0 && (!isfat(n.Type) || v.Op == ssa.OpVarDef) {
+				varkill = append(varkill, pos)
 			}
 		}
 	}
@@ -715,7 +671,7 @@ func (lv *Liveness) progeffects(prog *obj.Prog) (uevar, varkill, avarinit []int3
 // If n is not a tracked var, liveIndex returns -1.
 // If n is not a tracked var but should be tracked, liveIndex crashes.
 func liveIndex(n *Node, vars []*Node) int32 {
-	if n.Name.Curfn != Curfn || !livenessShouldTrack(n) {
+	if n == nil || n.Name.Curfn != Curfn || !livenessShouldTrack(n) {
 		return -1
 	}
 
@@ -732,12 +688,16 @@ func liveIndex(n *Node, vars []*Node) int32 {
 // Constructs a new liveness structure used to hold the global state of the
 // liveness computation. The cfg argument is a slice of *BasicBlocks and the
 // vars argument is a slice of *Nodes.
-func newliveness(fn *Node, ptxt *obj.Prog, cfg []*BasicBlock, vars []*Node) *Liveness {
+func newliveness(fn *Node, ptxt *obj.Prog, cfg []*BasicBlock, vars []*Node, f *ssa.Func, valueProgs map[*obj.Prog]*ssa.Value, blockProgs map[*obj.Prog]*ssa.Block) *Liveness {
 	result := Liveness{
 		fn:   fn,
 		ptxt: ptxt,
 		cfg:  cfg,
 		vars: vars,
+
+		f:          f,
+		valueProgs: valueProgs,
+		blockProgs: blockProgs,
 	}
 
 	nblocks := int32(len(cfg))
@@ -1768,7 +1728,7 @@ func printprog(p *obj.Prog) {
 // Entry pointer for liveness analysis. Constructs a complete CFG, solves for
 // the liveness of pointer variables in the function, and emits a runtime data
 // structure read by the garbage collector.
-func liveness(fn *Node, firstp *obj.Prog, argssym *Sym, livesym *Sym) {
+func liveness(fn *Node, firstp *obj.Prog, f *ssa.Func, valueProgs map[*obj.Prog]*ssa.Value, blockProgs map[*obj.Prog]*ssa.Block, argssym *Sym, livesym *Sym) {
 	// Change name to dump debugging information only for a specific function.
 	debugdelta := 0
 
@@ -1791,7 +1751,7 @@ func liveness(fn *Node, firstp *obj.Prog, argssym *Sym, livesym *Sym) {
 		printcfg(cfg)
 	}
 	vars := getvariables(fn)
-	lv := newliveness(fn, firstp, cfg, vars)
+	lv := newliveness(fn, firstp, cfg, vars, f, valueProgs, blockProgs)
 
 	// Run the dataflow framework.
 	livenessprologue(lv)
@@ -1828,4 +1788,390 @@ func liveness(fn *Node, firstp *obj.Prog, argssym *Sym, livesym *Sym) {
 	freecfg(cfg)
 
 	debuglive -= debugdelta
+}
+
+func auxSymNode(v *ssa.Value) *Node {
+	switch a := v.Aux.(type) {
+	case *ssa.ExternSymbol:
+		return nil
+	case *ssa.ArgSymbol:
+		return a.Node.(*Node)
+	case *ssa.AutoSymbol:
+		return a.Node.(*Node)
+	case nil:
+		return nil
+	default:
+		Fatalf("bad value: %s", v.LongString())
+		return nil
+	}
+}
+
+const (
+	MemRead = 1 << iota
+	MemWrite
+)
+
+func valueEffect(v *ssa.Value) (*Node, uint32) {
+	if v == nil {
+		return nil, 0
+	}
+
+	switch v.Op {
+	case ssa.OpLoadReg:
+		n, _ := AutoVar(v.Args[0])
+		return n, MemRead
+	case ssa.OpStoreReg:
+		n, _ := AutoVar(v)
+		return n, MemWrite
+
+	case ssa.OpVarLive:
+		return v.Aux.(*Node), MemRead
+	case ssa.OpVarDef, ssa.OpVarKill:
+		return v.Aux.(*Node), MemWrite
+	case ssa.OpKeepAlive:
+		n, _ := AutoVar(v.Args[0])
+		return n, MemRead
+
+		// 386
+	case ssa.Op386LEAL,
+		ssa.Op386LEAL1,
+		ssa.Op386LEAL2,
+		ssa.Op386LEAL4,
+		ssa.Op386LEAL8,
+		ssa.Op386LoweredNilCheck,
+		ssa.Op386MOVBload,
+		ssa.Op386MOVBloadidx1,
+		ssa.Op386MOVBLSXload,
+		ssa.Op386MOVLload,
+		ssa.Op386MOVLloadidx1,
+		ssa.Op386MOVLloadidx4,
+		ssa.Op386MOVSDload,
+		ssa.Op386MOVSDloadidx1,
+		ssa.Op386MOVSDloadidx8,
+		ssa.Op386MOVSSload,
+		ssa.Op386MOVSSloadidx1,
+		ssa.Op386MOVSSloadidx4,
+		ssa.Op386MOVWload,
+		ssa.Op386MOVWloadidx1,
+		ssa.Op386MOVWloadidx2,
+		ssa.Op386MOVWLSXload:
+		return auxSymNode(v), MemRead
+	case ssa.Op386MOVLstoreconstidx1,
+		ssa.Op386MOVLstoreconstidx4,
+		ssa.Op386MOVWstoreconstidx1,
+		ssa.Op386MOVWstoreconstidx2,
+		ssa.Op386MOVBstoreconstidx1,
+		ssa.Op386MOVLstoreconst,
+		ssa.Op386MOVWstoreconst,
+		ssa.Op386MOVBstoreconst,
+		ssa.Op386MOVBstoreidx1,
+		ssa.Op386MOVWstoreidx1,
+		ssa.Op386MOVLstoreidx1,
+		ssa.Op386MOVSSstoreidx1,
+		ssa.Op386MOVSDstoreidx1,
+		ssa.Op386MOVWstoreidx2,
+		ssa.Op386MOVSSstoreidx4,
+		ssa.Op386MOVLstoreidx4,
+		ssa.Op386MOVSDstoreidx8,
+		ssa.Op386MOVSSstore,
+		ssa.Op386MOVSDstore,
+		ssa.Op386MOVLstore,
+		ssa.Op386MOVWstore,
+		ssa.Op386MOVBstore:
+		return auxSymNode(v), MemWrite
+
+		// amd64
+	case ssa.OpAMD64ADDLmem,
+		ssa.OpAMD64ADDQmem,
+		ssa.OpAMD64LEAL,
+		ssa.OpAMD64LEAQ,
+		ssa.OpAMD64LEAQ1,
+		ssa.OpAMD64LEAQ2,
+		ssa.OpAMD64LEAQ4,
+		ssa.OpAMD64LEAQ8,
+		ssa.OpAMD64LoweredNilCheck,
+		ssa.OpAMD64MOVBload,
+		ssa.OpAMD64MOVBloadidx1,
+		ssa.OpAMD64MOVBQSXload,
+		ssa.OpAMD64MOVLatomicload,
+		ssa.OpAMD64MOVLload,
+		ssa.OpAMD64MOVLloadidx1,
+		ssa.OpAMD64MOVLloadidx4,
+		ssa.OpAMD64MOVLQSXload,
+		ssa.OpAMD64MOVOload,
+		ssa.OpAMD64MOVQatomicload,
+		ssa.OpAMD64MOVQload,
+		ssa.OpAMD64MOVQloadidx1,
+		ssa.OpAMD64MOVQloadidx8,
+		ssa.OpAMD64MOVSDload,
+		ssa.OpAMD64MOVSDloadidx1,
+		ssa.OpAMD64MOVSDloadidx8,
+		ssa.OpAMD64MOVSSload,
+		ssa.OpAMD64MOVSSloadidx1,
+		ssa.OpAMD64MOVSSloadidx4,
+		ssa.OpAMD64MOVWload,
+		ssa.OpAMD64MOVWloadidx1,
+		ssa.OpAMD64MOVWloadidx2,
+		ssa.OpAMD64MOVWQSXload,
+		ssa.OpAMD64SUBLmem,
+		ssa.OpAMD64SUBQmem,
+		ssa.OpAMD64ANDQmem,
+		ssa.OpAMD64ANDLmem,
+		ssa.OpAMD64ORQmem,
+		ssa.OpAMD64ORLmem,
+		ssa.OpAMD64XORQmem,
+		ssa.OpAMD64XORLmem,
+		ssa.OpAMD64ADDSDmem,
+		ssa.OpAMD64ADDSSmem,
+		ssa.OpAMD64SUBSDmem,
+		ssa.OpAMD64SUBSSmem,
+		ssa.OpAMD64MULSDmem,
+		ssa.OpAMD64MULSSmem:
+		return auxSymNode(v), MemRead
+	case ssa.OpAMD64MOVBstore,
+		ssa.OpAMD64MOVBstoreconst,
+		ssa.OpAMD64MOVBstoreconstidx1,
+		ssa.OpAMD64MOVBstoreidx1,
+		ssa.OpAMD64MOVLstore,
+		ssa.OpAMD64MOVLstoreconst,
+		ssa.OpAMD64MOVLstoreconstidx1,
+		ssa.OpAMD64MOVLstoreconstidx4,
+		ssa.OpAMD64MOVLstoreidx1,
+		ssa.OpAMD64MOVLstoreidx4,
+		ssa.OpAMD64MOVOstore,
+		ssa.OpAMD64MOVQstore,
+		ssa.OpAMD64MOVQstoreconst,
+		ssa.OpAMD64MOVQstoreconstidx1,
+		ssa.OpAMD64MOVQstoreconstidx8,
+		ssa.OpAMD64MOVQstoreidx1,
+		ssa.OpAMD64MOVQstoreidx8,
+		ssa.OpAMD64MOVSDstore,
+		ssa.OpAMD64MOVSDstoreidx1,
+		ssa.OpAMD64MOVSDstoreidx8,
+		ssa.OpAMD64MOVSSstore,
+		ssa.OpAMD64MOVSSstoreidx1,
+		ssa.OpAMD64MOVSSstoreidx4,
+		ssa.OpAMD64MOVWstore,
+		ssa.OpAMD64MOVWstoreconst,
+		ssa.OpAMD64MOVWstoreconstidx1,
+		ssa.OpAMD64MOVWstoreconstidx2,
+		ssa.OpAMD64MOVWstoreidx1,
+		ssa.OpAMD64MOVWstoreidx2:
+		return auxSymNode(v), MemWrite
+	case ssa.OpAMD64ANDBlock,
+		ssa.OpAMD64CMPXCHGLlock,
+		ssa.OpAMD64CMPXCHGQlock,
+		ssa.OpAMD64ORBlock,
+		ssa.OpAMD64XADDLlock,
+		ssa.OpAMD64XADDQlock,
+		ssa.OpAMD64XCHGL,
+		ssa.OpAMD64XCHGQ:
+		return auxSymNode(v), MemRead | MemWrite
+
+		// arm64
+	case ssa.OpARM64LDAR,
+		ssa.OpARM64LDARW,
+		ssa.OpARM64LoweredNilCheck,
+		ssa.OpARM64FMOVDload,
+		ssa.OpARM64FMOVSload,
+		ssa.OpARM64MOVBload,
+		ssa.OpARM64MOVBUload,
+		ssa.OpARM64MOVDaddr,
+		ssa.OpARM64MOVDload,
+		ssa.OpARM64MOVHload,
+		ssa.OpARM64MOVHUload,
+		ssa.OpARM64MOVWload,
+		ssa.OpARM64MOVWUload:
+		return auxSymNode(v), MemRead
+
+	case ssa.OpARM64MOVDstorezero,
+		ssa.OpARM64MOVWstorezero,
+		ssa.OpARM64MOVHstorezero,
+		ssa.OpARM64MOVBstorezero,
+		ssa.OpARM64FMOVDstore,
+		ssa.OpARM64FMOVSstore,
+		ssa.OpARM64MOVDstore,
+		ssa.OpARM64MOVWstore,
+		ssa.OpARM64MOVHstore,
+		ssa.OpARM64MOVBstore,
+		ssa.OpARM64STLRW,
+		ssa.OpARM64STLR:
+		return auxSymNode(v), MemWrite
+
+		// arm
+	case ssa.OpARMLoweredNilCheck,
+		ssa.OpARMMOVBload,
+		ssa.OpARMMOVBUload,
+		ssa.OpARMMOVDload,
+		ssa.OpARMMOVFload,
+		ssa.OpARMMOVHload,
+		ssa.OpARMMOVHUload,
+		ssa.OpARMMOVWaddr,
+		ssa.OpARMMOVWload:
+		return auxSymNode(v), MemRead
+
+	case ssa.OpARMMOVDstore,
+		ssa.OpARMMOVFstore,
+		ssa.OpARMMOVWstore,
+		ssa.OpARMMOVHstore,
+		ssa.OpARMMOVBstore:
+		return auxSymNode(v), MemWrite
+
+		// mips64
+	case ssa.OpMIPS64LoweredNilCheck,
+		ssa.OpMIPS64MOVBload,
+		ssa.OpMIPS64MOVBUload,
+		ssa.OpMIPS64MOVDload,
+		ssa.OpMIPS64MOVFload,
+		ssa.OpMIPS64MOVHload,
+		ssa.OpMIPS64MOVHUload,
+		ssa.OpMIPS64MOVVaddr,
+		ssa.OpMIPS64MOVVload,
+		ssa.OpMIPS64MOVWload,
+		ssa.OpMIPS64MOVWUload:
+		return auxSymNode(v), MemRead
+
+	case ssa.OpMIPS64MOVVstorezero,
+		ssa.OpMIPS64MOVWstorezero,
+		ssa.OpMIPS64MOVHstorezero,
+		ssa.OpMIPS64MOVBstorezero,
+		ssa.OpMIPS64MOVDstore,
+		ssa.OpMIPS64MOVFstore,
+		ssa.OpMIPS64MOVVstore,
+		ssa.OpMIPS64MOVWstore,
+		ssa.OpMIPS64MOVHstore,
+		ssa.OpMIPS64MOVBstore:
+		return auxSymNode(v), MemWrite
+
+		// mips
+	case ssa.OpMIPSLoweredNilCheck,
+		ssa.OpMIPSMOVBload,
+		ssa.OpMIPSMOVBUload,
+		ssa.OpMIPSMOVDload,
+		ssa.OpMIPSMOVFload,
+		ssa.OpMIPSMOVHload,
+		ssa.OpMIPSMOVHUload,
+		ssa.OpMIPSMOVWaddr,
+		ssa.OpMIPSMOVWload:
+		return auxSymNode(v), MemRead
+
+	case ssa.OpMIPSMOVWstorezero,
+		ssa.OpMIPSMOVHstorezero,
+		ssa.OpMIPSMOVBstorezero,
+		ssa.OpMIPSMOVDstore,
+		ssa.OpMIPSMOVFstore,
+		ssa.OpMIPSMOVWstore,
+		ssa.OpMIPSMOVHstore,
+		ssa.OpMIPSMOVBstore:
+		return auxSymNode(v), MemWrite
+
+		// ppc64
+	case ssa.OpPPC64FMOVDload,
+		ssa.OpPPC64FMOVSload,
+		ssa.OpPPC64LoweredNilCheck,
+		ssa.OpPPC64MOVBZload,
+		ssa.OpPPC64MOVDaddr,
+		ssa.OpPPC64MOVDload,
+		ssa.OpPPC64MOVHload,
+		ssa.OpPPC64MOVHZload,
+		ssa.OpPPC64MOVWload,
+		ssa.OpPPC64MOVWZload:
+		return auxSymNode(v), MemRead
+
+	case ssa.OpPPC64FMOVDstore,
+		ssa.OpPPC64FMOVSstore,
+		ssa.OpPPC64MOVDstore,
+		ssa.OpPPC64MOVWstore,
+		ssa.OpPPC64MOVHstore,
+		ssa.OpPPC64MOVBstore,
+		ssa.OpPPC64MOVDstorezero,
+		ssa.OpPPC64MOVWstorezero,
+		ssa.OpPPC64MOVHstorezero,
+		ssa.OpPPC64MOVBstorezero:
+		return auxSymNode(v), MemWrite
+
+		// s390x
+	case ssa.OpS390XADDload,
+		ssa.OpS390XADDWload,
+		ssa.OpS390XANDload,
+		ssa.OpS390XANDWload,
+		ssa.OpS390XFMOVDload,
+		ssa.OpS390XFMOVDloadidx,
+		ssa.OpS390XFMOVSload,
+		ssa.OpS390XFMOVSloadidx,
+		ssa.OpS390XLoweredNilCheck,
+		ssa.OpS390XMOVBload,
+		ssa.OpS390XMOVBZload,
+		ssa.OpS390XMOVBZloadidx,
+		ssa.OpS390XMOVDaddr,
+		ssa.OpS390XMOVDaddridx,
+		ssa.OpS390XMOVDatomicload,
+		ssa.OpS390XMOVDBRload,
+		ssa.OpS390XMOVDBRloadidx,
+		ssa.OpS390XMOVDload,
+		ssa.OpS390XMOVDloadidx,
+		ssa.OpS390XMOVHBRload,
+		ssa.OpS390XMOVHBRloadidx,
+		ssa.OpS390XMOVHload,
+		ssa.OpS390XMOVHZload,
+		ssa.OpS390XMOVHZloadidx,
+		ssa.OpS390XMOVWBRload,
+		ssa.OpS390XMOVWBRloadidx,
+		ssa.OpS390XMOVWload,
+		ssa.OpS390XMOVWZatomicload,
+		ssa.OpS390XMOVWZload,
+		ssa.OpS390XMOVWZloadidx,
+		ssa.OpS390XMULLDload,
+		ssa.OpS390XMULLWload,
+		ssa.OpS390XORload,
+		ssa.OpS390XORWload,
+		ssa.OpS390XSUBload,
+		ssa.OpS390XSUBWload,
+		ssa.OpS390XXORload,
+		ssa.OpS390XXORWload:
+		return auxSymNode(v), MemRead
+
+	case ssa.OpS390XLoweredAtomicExchange32,
+		ssa.OpS390XLoweredAtomicExchange64:
+		return auxSymNode(v), MemRead | MemWrite
+
+	case ssa.OpS390XLoweredAtomicCas32,
+		ssa.OpS390XLoweredAtomicCas64,
+		ssa.OpS390XLAA,
+		ssa.OpS390XLAAG,
+		ssa.OpS390XMOVWatomicstore,
+		ssa.OpS390XMOVDatomicstore,
+		ssa.OpS390XSTM2,
+		ssa.OpS390XSTM3,
+		ssa.OpS390XSTM4,
+		ssa.OpS390XSTMG2,
+		ssa.OpS390XSTMG3,
+		ssa.OpS390XSTMG4,
+		ssa.OpS390XCLEAR,
+		ssa.OpS390XMOVDstoreconst,
+		ssa.OpS390XMOVWstoreconst,
+		ssa.OpS390XMOVHstoreconst,
+		ssa.OpS390XMOVBstoreconst,
+		ssa.OpS390XFMOVSstoreidx,
+		ssa.OpS390XFMOVDstoreidx,
+		ssa.OpS390XMOVHBRstoreidx,
+		ssa.OpS390XMOVWBRstoreidx,
+		ssa.OpS390XMOVDBRstoreidx,
+		ssa.OpS390XMOVBstoreidx,
+		ssa.OpS390XMOVHstoreidx,
+		ssa.OpS390XMOVWstoreidx,
+		ssa.OpS390XMOVDstoreidx,
+		ssa.OpS390XFMOVSstore,
+		ssa.OpS390XFMOVDstore,
+		ssa.OpS390XMOVHBRstore,
+		ssa.OpS390XMOVWBRstore,
+		ssa.OpS390XMOVDBRstore,
+		ssa.OpS390XMOVBstore,
+		ssa.OpS390XMOVHstore,
+		ssa.OpS390XMOVWstore,
+		ssa.OpS390XMOVDstore:
+		return auxSymNode(v), MemWrite
+	}
+
+	return nil, 0
 }

@@ -4360,7 +4360,7 @@ func genssa(f *ssa.Func, ptxt *obj.Prog, gcargs, gclocals *Sym) {
 
 	var valueProgs map[*obj.Prog]*ssa.Value
 	var blockProgs map[*obj.Prog]*ssa.Block
-	var logProgs = e.log
+	var logProgs = e.log || true
 	if logProgs {
 		valueProgs = make(map[*obj.Prog]*ssa.Value, f.NumValues())
 		blockProgs = make(map[*obj.Prog]*ssa.Block, f.NumBlocks())
@@ -4412,7 +4412,7 @@ func genssa(f *ssa.Func, ptxt *obj.Prog, gcargs, gclocals *Sym) {
 		br.P.To.Val = s.bstart[br.B.ID]
 	}
 
-	if logProgs {
+	if logProgs && false {
 		for p := ptxt; p != nil; p = p.Link {
 			var s string
 			if v, ok := valueProgs[p]; ok {
@@ -4454,7 +4454,7 @@ func genssa(f *ssa.Func, ptxt *obj.Prog, gcargs, gclocals *Sym) {
 	}
 
 	// Generate gc bitmaps.
-	liveness(Curfn, ptxt, gcargs, gclocals)
+	liveness(Curfn, ptxt, f, valueProgs, blockProgs, gcargs, gclocals)
 
 	// Add frame prologue. Zero ambiguously live variables.
 	Thearch.Defframe(ptxt)
