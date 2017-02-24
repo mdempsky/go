@@ -302,13 +302,6 @@ func newliveness(fn *Node, ptxt *obj.Prog, vars []*Node, f *ssa.Func, valueProgs
 		bb := new(BlockEffect)
 		bes[b.ID] = bb
 
-		for _, succ := range b.Succs {
-			bb.succs = append(bb.succs, bes[succ.Block().ID])
-		}
-		for _, pred := range b.Preds {
-			bb.preds = append(bb.preds, bes[pred.Block().ID])
-		}
-
 		bb.uevar = bulk.next()
 		bb.varkill = bulk.next()
 		bb.livein = bulk.next()
@@ -316,6 +309,16 @@ func newliveness(fn *Node, ptxt *obj.Prog, vars []*Node, f *ssa.Func, valueProgs
 		bb.avarinit = bulk.next()
 		bb.avarinitany = bulk.next()
 		bb.avarinitall = bulk.next()
+	}
+
+	for _, b := range f.Blocks {
+		bb := bes[b.ID]
+		for _, succ := range b.Succs {
+			bb.succs = append(bb.succs, bes[succ.Block().ID])
+		}
+		for _, pred := range b.Preds {
+			bb.preds = append(bb.preds, bes[pred.Block().ID])
+		}
 	}
 
 	if newselect == nil {
@@ -331,17 +334,14 @@ func newliveness(fn *Node, ptxt *obj.Prog, vars []*Node, f *ssa.Func, valueProgs
 		if !blockcallsany(b, newselect) {
 			continue
 		}
-		fmt.Println(b, "calls newselect")
 		var succIDs []ssa.ID
 		for b1 := b; ; {
 			if blockcallsany(b1, selectNames[:]...) {
-				fmt.Println(b1, "calls selectfoo")
 				succIDs = append(succIDs, b1.Succs[0].Block().ID)
 				b1 = b1.Succs[1].Block()
 				continue
 			}
 			if blockcallsany(b1, selectgo) {
-				fmt.Println(b1, "calls selectgo")
 				// Add edges from b1 to each ID in succIDs.
 				bb := bes[b1.ID]
 				for _, succID := range succIDs {
@@ -752,8 +752,11 @@ func livenesssolve(lv *Liveness) {
 					newliveout.Set(pos)
 				}
 			} else {
-				for _, succ := range b.Succs {
-					newliveout.Or(newliveout, lv.bes[succ.Block().ID].livein)
+				for _, succ := range bb.succs {
+					if succ == nil {
+						fmt.Println(bb.succs)
+					}
+					newliveout.Or(newliveout, succ.livein)
 				}
 			}
 
@@ -799,13 +802,12 @@ func (lv *Liveness) entryvarinit(b *ssa.Block, any, all bvec) {
 		return
 	}
 
-	predBE := lv.bes[b.Preds[0].Block().ID]
-	any.Copy(predBE.avarinitany)
-	all.Copy(predBE.avarinitall)
-	for _, pred := range b.Preds[1:] {
-		be := lv.bes[pred.Block().ID]
-		any.Or(any, be.avarinitany)
-		all.And(all, be.avarinitall)
+	bb := lv.bes[b.ID]
+	any.Copy(bb.preds[0].avarinitany)
+	all.Copy(bb.preds[0].avarinitall)
+	for _, pred := range bb.preds[1:] {
+		any.Or(any, pred.avarinitany)
+		all.And(all, pred.avarinitall)
 	}
 }
 
