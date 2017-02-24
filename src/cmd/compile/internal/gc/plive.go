@@ -861,8 +861,7 @@ func livenessepilogue(lv *Liveness) {
 	liveout := bvalloc(nvars)
 	any := bvalloc(nvars)
 	all := bvalloc(nvars)
-	outLive := bvalloc(argswords())       // always-live output params
-	outLiveHeap := bvalloc(localswords()) // always-live pointers to heap-allocated copies of output params
+	livedefer := bvalloc(nvars)
 
 	// If there is a defer (that could recover), then all output
 	// parameters are live all the time.  In addition, any locals
@@ -872,7 +871,7 @@ func livenessepilogue(lv *Liveness) {
 	// TODO: if the output parameter is heap-allocated, then we
 	// don't need to keep the stack copy live?
 	if hasdefer {
-		for _, n := range lv.vars {
+		for i, n := range lv.vars {
 			if n.Class == PPARAMOUT {
 				if n.IsOutputParamHeapAddr() {
 					// Just to be paranoid.
@@ -880,13 +879,11 @@ func livenessepilogue(lv *Liveness) {
 				}
 				// Needzero not necessary, as the compiler
 				// explicitly zeroes output vars at start of fn.
-				xoffset := n.Xoffset
-				onebitwalktype1(n.Type, &xoffset, outLive)
+				livedefer.Set(int32(i))
 			}
 			if n.IsOutputParamHeapAddr() {
 				n.Name.Needzero = true
-				xoffset := n.Xoffset + stkptrsize
-				onebitwalktype1(n.Type, &xoffset, outLiveHeap)
+				livedefer.Set(int32(i))
 			}
 		}
 	}
@@ -1009,8 +1006,7 @@ func livenessepilogue(lv *Liveness) {
 				onebitlivepointermap(lv, liveout, lv.vars, args, locals)
 
 				// Mark pparamout variables (as described above)
-				args.Or(args, outLive)
-				locals.Or(locals, outLiveHeap)
+				onebitlivepointermap(lv, livedefer, lv.vars, args, locals)
 
 				lv.callpos[v] = pos
 				pos--
