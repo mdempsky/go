@@ -1163,6 +1163,8 @@ func livenesscompact(lv *Liveness) {
 		lv.livepointers[j] = bvec{}
 		lv.argslivepointers[j] = bvec{}
 	}
+	lv.livepointers = lv.livepointers[:uniq]
+	lv.argslivepointers = lv.argslivepointers[:uniq]
 
 	// Rewrite PCDATA instructions to use new numbering.
 	var prev, prev2, prev3 *obj.Prog
@@ -1266,20 +1268,12 @@ func printbitset(printed bool, name string, vars []*Node, bits bvec) bool {
 // length of the bitmaps. All bitmaps are assumed to be of equal length. The
 // remaining bytes are the raw bitmaps.
 func onebitwritesymbol(arr []bvec, sym *Sym) {
-	off := 4                                  // number of bitmaps, to fill in later
+	off := duint32(sym, 0, uint32(len(arr)))  // number of bitmaps
 	off = duint32(sym, off, uint32(arr[0].n)) // number of bits in each bitmap
-	var i int
-	for i = 0; i < len(arr); i++ {
-		// bitmap words
-		bv := arr[i]
-
-		if bv.b == nil {
-			break
-		}
+	for _, bv := range arr {
 		off = dbvec(sym, off, bv)
 	}
 
-	duint32(sym, 0, uint32(i)) // number of bitmaps
 	ls := Linksym(sym)
 	ls.Name = fmt.Sprintf("gclocals·%x", md5.Sum(ls.P))
 	ls.Set(obj.AttrDuplicateOK, true)
@@ -1291,6 +1285,11 @@ func onebitwritesymbol(arr []bvec, sym *Sym) {
 		Ctxt.Hash[sv] = ls
 		ggloblsym(sym, int32(off), obj.RODATA)
 	}
+}
+
+func livenessemit(lv *Liveness, argssym, livesym *Sym) {
+	onebitwritesymbol(lv.livepointers, livesym)
+	onebitwritesymbol(lv.argslivepointers, argssym)
 }
 
 func printprog(p *obj.Prog) {
@@ -1330,8 +1329,7 @@ func liveness(fn *Node, firstp *obj.Prog, f *ssa.Func, valueProgs map[*obj.Prog]
 	livenesscompact(lv)
 
 	// Emit the live pointer map data structures
-	onebitwritesymbol(lv.livepointers, livesym)
-	onebitwritesymbol(lv.argslivepointers, argssym)
+	livenessemit(lv, argssym, livesym)
 
 	// Free everything.
 	for _, ln := range fn.Func.Dcl {
