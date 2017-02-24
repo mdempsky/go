@@ -607,37 +607,45 @@ func (lv *Liveness) initcache() {
 // The avarinit output serves as a signal that the data has been
 // initialized, because any use of a variable must come after its
 // initialization.
-func (lv *Liveness) progeffects(prog *obj.Prog) (uevar, varkill, avarinit []int32) {
+
+type Effect int
+
+const (
+	Uevar Effect = 1 << iota
+	Varkill
+	Avarinit
+)
+
+func (lv *Liveness) progeffects(prog *obj.Prog) (int32, Effect) {
 	if !lv.cache.initialized {
 		Fatalf("liveness progeffects cache not initialized")
-		return
 	}
-
-	uevar = lv.cache.uevar[:0]
-	varkill = lv.cache.varkill[:0]
-	avarinit = lv.cache.avarinit[:0]
 
 	v := lv.valueProgs[prog]
 	n, flags := valueEffect(v)
-	if pos := liveIndex(n, lv.vars); pos >= 0 {
-		if n.Addrtaken {
-			if v.Op != ssa.OpVarKill {
-				avarinit = append(avarinit, pos)
-			}
-			if v.Op == ssa.OpVarDef || v.Op == ssa.OpVarKill {
-				varkill = append(varkill, pos)
-			}
-		} else {
-			if flags&MemRead != 0 {
-				uevar = append(uevar, pos)
-			}
-			if flags&MemWrite != 0 && (!isfat(n.Type) || v.Op == ssa.OpVarDef) {
-				varkill = append(varkill, pos)
-			}
+	pos := liveIndex(n, lv.vars)
+	if pos < 0 {
+		return -1, 0
+	}
+
+	var effect Effect
+	if n.Addrtaken {
+		if v.Op != ssa.OpVarKill {
+			effect |= Avarinit
+		}
+		if v.Op == ssa.OpVarDef || v.Op == ssa.OpVarKill {
+			effect |= Varkill
+		}
+	} else {
+		if flags&MemRead != 0 {
+			effect |= Uevar
+		}
+		if flags&MemWrite != 0 && (!isfat(n.Type) || v.Op == ssa.OpVarDef) {
+			effect |= Varkill
 		}
 	}
 
-	return uevar, varkill, avarinit
+	return pos, effect
 }
 
 // liveIndex returns the index of n in the set of tracked vars.
@@ -688,11 +696,28 @@ func newliveness(fn *Node, ptxt *obj.Prog, cfg []*BasicBlock, vars []*Node, f *s
 	return &result
 }
 
-func (lv *Liveness) printeffects(p *obj.Prog, uevar, varkill, avarinit []int32) {
+func (lv *Liveness) printeffects(p *obj.Prog, npos int32, effect Effect) {
+	var bv bvec
+	if effect != 0 {
+		bv = bvalloc(int32(len(lv.vars)))
+		bv.Set(npos)
+	}
+
+	var uevar, varkill, avarinit bvec
+	if effect&Uevar != 0 {
+		uevar = bv
+	}
+	if effect&Varkill != 0 {
+		varkill = bv
+	}
+	if effect&Avarinit != 0 {
+		avarinit = bv
+	}
+
 	fmt.Printf("effects of %v\n", p)
-	fmt.Println("uevar:", lv.slice2bvec(uevar))
-	fmt.Println("varkill:", lv.slice2bvec(varkill))
-	fmt.Println("avarinit:", lv.slice2bvec(avarinit))
+	fmt.Println("uevar:", uevar)
+	fmt.Println("varkill:", varkill)
+	fmt.Println("avarinit:", avarinit)
 }
 
 // Pretty print a variable node. Uses Pascal like conventions for pointers and
@@ -1005,15 +1030,15 @@ func livenessprologue(lv *Liveness) {
 		// Walk the block instructions backward and update the block
 		// effects with the each prog effects.
 		for p := bb.last; p != nil; p = p.Opt.(*obj.Prog) {
-			uevar, varkill, _ := lv.progeffects(p)
+			pos, effect := lv.progeffects(p)
 			if debuglive >= 3 {
-				lv.printeffects(p, uevar, varkill, nil)
+				lv.printeffects(p, pos, effect)
 			}
-			for _, pos := range varkill {
+			if effect&Varkill != 0 {
 				bb.varkill.Set(pos)
 				bb.uevar.Unset(pos)
 			}
-			for _, pos := range uevar {
+			if effect&Uevar != 0 {
 				bb.uevar.Set(pos)
 			}
 		}
@@ -1021,14 +1046,14 @@ func livenessprologue(lv *Liveness) {
 		// Walk the block instructions forward to update avarinit bits.
 		// avarinit describes the effect at the end of the block, not the beginning.
 		for p := bb.first; ; p = p.Link {
-			_, varkill, avarinit := lv.progeffects(p)
+			pos, effect := lv.progeffects(p)
 			if debuglive >= 3 {
-				lv.printeffects(p, nil, varkill, avarinit)
+				lv.printeffects(p, pos, effect)
 			}
-			for _, pos := range varkill {
+			if effect&Varkill != 0 {
 				bb.avarinit.Unset(pos)
 			}
-			for _, pos := range avarinit {
+			if effect&Avarinit != 0 {
 				bb.avarinit.Set(pos)
 			}
 			if p == bb.last {
@@ -1243,12 +1268,12 @@ func livenessepilogue(lv *Liveness) {
 		// allocate liveness maps for those instructions that need them.
 		// Seed the maps with information about the addrtaken variables.
 		for p := bb.first; ; p = p.Link {
-			_, varkill, avarinit := lv.progeffects(p)
-			for _, pos := range varkill {
+			pos, effect := lv.progeffects(p)
+			if effect&Varkill != 0 {
 				any.Unset(pos)
 				all.Unset(pos)
 			}
-			for _, pos := range avarinit {
+			if effect&Avarinit != 0 {
 				any.Set(pos)
 				all.Set(pos)
 			}
@@ -1334,19 +1359,35 @@ func livenessepilogue(lv *Liveness) {
 			next = p.Opt.(*obj.Prog) // splicebefore modifies p.opt
 
 			// Propagate liveness information
-			uevar, varkill, _ := lv.progeffects(p)
+			npos, effect := lv.progeffects(p)
 
 			liveout.Copy(livein)
-			for _, pos := range varkill {
-				livein.Unset(pos)
+			if effect&Varkill != 0 {
+				livein.Unset(npos)
 			}
-			for _, pos := range uevar {
-				livein.Set(pos)
+			if effect&Uevar != 0 {
+				livein.Set(npos)
 			}
 			if debuglive >= 3 && issafepoint(p) {
+				bv0 := bvalloc(int32(len(lv.vars)))
+
+				var bv bvec
+				if effect != 0 {
+					bv = bvalloc(int32(len(lv.vars)))
+					bv.Set(npos)
+				}
+
+				uevar, varkill := bv0, bv0
+				if effect&Uevar != 0 {
+					uevar = bv
+				}
+				if effect&Varkill != 0 {
+					varkill = bv
+				}
+
 				fmt.Printf("%v\n", p)
-				printvars("uevar", lv.slice2bvec(uevar), lv.vars)
-				printvars("varkill", lv.slice2bvec(varkill), lv.vars)
+				printvars("uevar", uevar, lv.vars)
+				printvars("varkill", varkill, lv.vars)
 				printvars("livein", livein, lv.vars)
 				printvars("liveout", liveout, lv.vars)
 			}
@@ -1642,11 +1683,31 @@ func livenessprintdebug(lv *Liveness) {
 			if p.As == obj.APCDATA && p.From.Offset == obj.PCDATA_StackMapIndex {
 				pcdata = int(p.To.Offset)
 			}
-			uevar, varkill, avarinit := lv.progeffects(p)
+
+			pos, effect := lv.progeffects(p)
+
+			var bv bvec
+			if effect != 0 {
+				bv = bvalloc(int32(len(lv.vars)))
+				bv.Set(pos)
+			}
+
+			bv0 := bvalloc(int32(len(lv.vars)))
+			uevar, varkill, avarinit := bv0, bv0, bv0
+			if effect&Uevar != 0 {
+				uevar = bv
+			}
+			if effect&Varkill != 0 {
+				varkill = bv
+			}
+			if effect&Avarinit != 0 {
+				avarinit = bv
+			}
+
 			printed = false
-			printed = printbitset(printed, "uevar", lv.vars, lv.slice2bvec(uevar))
-			printed = printbitset(printed, "varkill", lv.vars, lv.slice2bvec(varkill))
-			printed = printbitset(printed, "avarinit", lv.vars, lv.slice2bvec(avarinit))
+			printed = printbitset(printed, "uevar", lv.vars, uevar)
+			printed = printbitset(printed, "varkill", lv.vars, varkill)
+			printed = printbitset(printed, "avarinit", lv.vars, avarinit)
 			if printed {
 				fmt.Printf("\n")
 			}
