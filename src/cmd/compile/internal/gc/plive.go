@@ -615,25 +615,6 @@ func (lv *Liveness) progeffects(prog *obj.Prog) (uevar, varkill, avarinit []int3
 		return
 	}
 
-	// A return instruction with a p.to is a tail return, which brings
-	// the stack pointer back up (if it ever went down) and then jumps
-	// to a new function entirely. That form of instruction must read
-	// all the parameters for correctness, and similarly it must not
-	// read the out arguments - they won't be set until the new
-	// function runs.
-	if (prog.As == obj.AJMP || prog.As == obj.ARET) && prog.To.Type == obj.TYPE_MEM && prog.To.Name == obj.NAME_EXTERN {
-		// This is a tail call. Ensure the arguments are still alive.
-		// See issue 16016.
-		return lv.cache.tailuevar, nil, nil
-	}
-
-	if prog.As == obj.ARET {
-		if prog.To.Type != obj.TYPE_NONE {
-			Fatalf("weird RET prog: %v", prog)
-		}
-		return lv.cache.retuevar, nil, nil
-	}
-
 	if prog.As == obj.ATEXT {
 		// A text instruction marks the entry point to a function and
 		// the definition point of all in arguments.
@@ -1091,17 +1072,7 @@ func livenesssolve(lv *Liveness) {
 	for change := true; change; {
 		change = false
 		for _, bb := range lv.cfg {
-			any.Clear()
-			all.Clear()
-			for j, pred := range bb.pred {
-				if j == 0 {
-					any.Copy(pred.avarinitany)
-					all.Copy(pred.avarinitall)
-				} else {
-					any.Or(any, pred.avarinitany)
-					all.And(all, pred.avarinitall)
-				}
-			}
+			lv.entryvarinit(bb, any, all)
 
 			any.AndNot(any, bb.varkill)
 			all.AndNot(all, bb.varkill)
@@ -1136,8 +1107,14 @@ func livenesssolve(lv *Liveness) {
 			//
 			// out[b] = \bigcup_{s \in succ[b]} in[s]
 			newliveout.Clear()
-			for _, succ := range bb.succ {
-				newliveout.Or(newliveout, succ.livein)
+			if uevar, ok := lv.exitblocklive(bb); ok {
+				for _, pos := range uevar {
+					newliveout.Set(pos)
+				}
+			} else {
+				for _, succ := range bb.succ {
+					newliveout.Or(newliveout, succ.livein)
+				}
 			}
 
 			if !bb.liveout.Eq(newliveout) {
@@ -1155,6 +1132,49 @@ func livenesssolve(lv *Liveness) {
 			bb.livein.Or(newlivein, bb.uevar)
 		}
 	}
+}
+
+func (lv *Liveness) entryvarinit(bb *BasicBlock, any, all bvec) {
+	any.Clear()
+	all.Clear()
+	for j, pred := range bb.pred {
+		if j == 0 {
+			any.Copy(pred.avarinitany)
+			all.Copy(pred.avarinitall)
+		} else {
+			any.Or(any, pred.avarinitany)
+			all.And(all, pred.avarinitall)
+		}
+	}
+}
+
+func (lv *Liveness) exitblocklive(bb *BasicBlock) ([]int32, bool) {
+	prog := bb.last
+
+	// A return instruction with a p.to is a tail return, which brings
+	// the stack pointer back up (if it ever went down) and then jumps
+	// to a new function entirely. That form of instruction must read
+	// all the parameters for correctness, and similarly it must not
+	// read the out arguments - they won't be set until the new
+	// function runs.
+	if (prog.As == obj.AJMP || prog.As == obj.ARET) && prog.To.Type == obj.TYPE_MEM && prog.To.Name == obj.NAME_EXTERN {
+		// This is a tail call. Ensure the arguments are still alive.
+		// See issue 16016.
+		return lv.cache.tailuevar, true
+	}
+
+	if prog.As == obj.ARET {
+		if prog.To.Type != obj.TYPE_NONE {
+			Fatalf("weird RET prog: %v", prog)
+		}
+		return lv.cache.retuevar, true
+	}
+
+	if prog.As == obj.AUNDEF {
+		return nil, true
+	}
+
+	return nil, false
 }
 
 // This function is slow but it is only used for generating debug prints.
@@ -1221,19 +1241,7 @@ func livenessepilogue(lv *Liveness) {
 		// Compute avarinitany and avarinitall for entry to block.
 		// This duplicates information known during livenesssolve
 		// but avoids storing two more vectors for each block.
-		any.Clear()
-
-		all.Clear()
-		for j := 0; j < len(bb.pred); j++ {
-			pred := bb.pred[j]
-			if j == 0 {
-				any.Copy(pred.avarinitany)
-				all.Copy(pred.avarinitall)
-			} else {
-				any.Or(any, pred.avarinitany)
-				all.And(all, pred.avarinitall)
-			}
-		}
+		lv.entryvarinit(bb, any, all)
 
 		// Walk forward through the basic block instructions and
 		// allocate liveness maps for those instructions that need them.
