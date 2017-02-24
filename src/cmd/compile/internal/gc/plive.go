@@ -628,23 +628,23 @@ func (lv *Liveness) progeffects(prog *obj.Prog) (int32, Effect) {
 		return -1, 0
 	}
 
-	var effect Effect
 	if n.Addrtaken {
-		if v.Op != ssa.OpVarKill {
-			effect |= Avarinit
+		if v.Op == ssa.OpVarKill {
+			return pos, Varkill
 		}
-		if v.Op == ssa.OpVarDef || v.Op == ssa.OpVarKill {
-			effect |= Varkill
+		if v.Op == ssa.OpVarDef {
+			return pos, Varkill | Avarinit
 		}
-	} else {
-		if flags&MemRead != 0 {
-			effect |= Uevar
-		}
-		if flags&MemWrite != 0 && (!isfat(n.Type) || v.Op == ssa.OpVarDef) {
-			effect |= Varkill
-		}
+		return pos, Avarinit
 	}
 
+	var effect Effect
+	if flags&MemRead != 0 {
+		effect |= Uevar
+	}
+	if flags&MemWrite != 0 && (!isfat(n.Type) || v.Op == ssa.OpVarDef) {
+		effect |= Varkill
+	}
 	return pos, effect
 }
 
@@ -1076,13 +1076,9 @@ func livenesssolve(lv *Liveness) {
 	// Push avarinitall, avarinitany forward.
 	// avarinitall says the addressed var is initialized along all paths reaching the block exit.
 	// avarinitany says the addressed var is initialized along some path reaching the block exit.
-	for i, bb := range lv.cfg {
-		if i == 0 {
-			bb.avarinitall.Copy(bb.avarinit)
-		} else {
-			bb.avarinitall.Clear()
-			bb.avarinitall.Not()
-		}
+	for _, bb := range lv.cfg {
+		bb.avarinitall.Clear()
+		bb.avarinitall.Not()
 		bb.avarinitany.Copy(bb.avarinit)
 	}
 
@@ -1124,7 +1120,7 @@ func livenesssolve(lv *Liveness) {
 			//
 			// out[b] = \bigcup_{s \in succ[b]} in[s]
 			newliveout.Clear()
-			if uevar, ok := lv.exitblocklive(bb); ok {
+			if uevar, ok := lv.exitblockuses(bb); ok {
 				for _, pos := range uevar {
 					newliveout.Set(pos)
 				}
@@ -1169,7 +1165,7 @@ func (lv *Liveness) entryvarinit(bb *BasicBlock, any, all bvec) {
 	}
 }
 
-func (lv *Liveness) exitblocklive(bb *BasicBlock) ([]int32, bool) {
+func (lv *Liveness) exitblockuses(bb *BasicBlock) ([]int32, bool) {
 	prog := bb.last
 
 	// A return instruction with a p.to is a tail return, which brings
