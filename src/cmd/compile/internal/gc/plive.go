@@ -1417,6 +1417,7 @@ func livenessepilogue(lv *Liveness) {
 				// Only CALL instructions need a PCDATA annotation.
 				// The TEXT instruction annotation is implicit.
 				if p.As == obj.ACALL {
+					before := p
 					if isdeferreturn(p) {
 						// runtime.deferreturn modifies its return address to return
 						// back to the CALL, not to the subsequent instruction.
@@ -1424,17 +1425,15 @@ func livenessepilogue(lv *Liveness) {
 						// the PCDATA must begin one instruction early too.
 						// The instruction before a call to deferreturn is always a
 						// no-op, to keep PC-specific data unambiguous.
-						prev := p.Opt.(*obj.Prog)
+						before = before.Opt.(*obj.Prog)
 						if Ctxt.Arch.Family == sys.PPC64 {
 							// On ppc64 there is an additional instruction
 							// (another no-op or reload of toc pointer) before
 							// the call.
-							prev = prev.Opt.(*obj.Prog)
+							before = before.Opt.(*obj.Prog)
 						}
-						splicebefore(lv, bb, newpcdataprog(prev, pos), prev)
-					} else {
-						splicebefore(lv, bb, newpcdataprog(p, pos), p)
 					}
+					splicebefore(lv, bb, newpcdataprog(before, pos), before)
 				}
 
 				pos--
