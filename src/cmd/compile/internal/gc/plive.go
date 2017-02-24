@@ -107,10 +107,6 @@ type progeffectscache struct {
 	tailuevar    []int32
 	retuevar     []int32
 	textavarinit []int32
-	uevar        [3]int32
-	varkill      [3]int32
-	avarinit     [3]int32
-	initialized  bool
 }
 
 // ProgInfo holds information about the instruction for use
@@ -557,12 +553,6 @@ func isfunny(n *Node) bool {
 }
 
 func (lv *Liveness) initcache() {
-	if lv.cache.initialized {
-		Fatalf("liveness cache initialized twice")
-		return
-	}
-	lv.cache.initialized = true
-
 	for i, node := range lv.vars {
 		switch node.Class {
 		case PPARAM:
@@ -617,10 +607,6 @@ const (
 )
 
 func (lv *Liveness) progeffects(prog *obj.Prog) (int32, Effect) {
-	if !lv.cache.initialized {
-		Fatalf("liveness progeffects cache not initialized")
-	}
-
 	v := lv.valueProgs[prog]
 	n, flags := valueEffect(v)
 	pos := liveIndex(n, lv.vars)
@@ -1145,6 +1131,20 @@ func livenesssolve(lv *Liveness) {
 			bb.livein.Or(newlivein, bb.uevar)
 		}
 	}
+
+	// Useful sanity check: on entry to the function,
+	// the only things that can possibly be live are the
+	// input parameters.
+	bb := lv.cfg[0]
+	for j := int32(0); j < bb.livein.n; j++ {
+		if !bb.livein.Get(j) {
+			continue
+		}
+		n := lv.vars[j]
+		if n.Class != PPARAM {
+			yyerrorl(bb.first.Pos, "internal error: %v %L recorded as live on entry, p.Pc=%v", Curfn.Func.Nname, n, bb.first.Pc)
+		}
+	}
 }
 
 func (lv *Liveness) entryvarinit(bb *BasicBlock, any, all bvec) {
@@ -1228,7 +1228,6 @@ func islive(n *Node, args bvec, locals bvec) bool {
 // variables at each safe point locations.
 func livenessepilogue(lv *Liveness) {
 	nvars := int32(len(lv.vars))
-	livein := bvalloc(nvars)
 	liveout := bvalloc(nvars)
 	any := bvalloc(nvars)
 	all := bvalloc(nvars)
@@ -1285,9 +1284,7 @@ func livenessepilogue(lv *Liveness) {
 			if issafepoint(p) {
 				// Annotate ambiguously live variables so that they can
 				// be zeroed at function entry.
-				// livein and liveout are dead here and used as temporaries.
-				livein.Clear()
-
+				// liveout is dead here and used as a temporary.
 				liveout.AndNot(any, all)
 				if !liveout.IsEmpty() {
 					for pos := int32(0); pos < liveout.n; pos++ {
@@ -1357,67 +1354,17 @@ func livenessepilogue(lv *Liveness) {
 			Fatalf("livenessepilogue")
 		}
 
-		livein.Copy(bb.liveout)
+		liveout.Copy(bb.liveout)
 		var next *obj.Prog
 		for p := bb.last; p != nil; p = next {
 			next = p.Opt.(*obj.Prog) // splicebefore modifies p.opt
-
-			// Propagate liveness information
-			npos, effect := lv.progeffects(p)
-
-			liveout.Copy(livein)
-			if effect&Varkill != 0 {
-				livein.Unset(npos)
-			}
-			if effect&Uevar != 0 {
-				livein.Set(npos)
-			}
-			if debuglive >= 3 && issafepoint(p) {
-				bv0 := bvalloc(int32(len(lv.vars)))
-
-				var bv bvec
-				if effect != 0 {
-					bv = bvalloc(int32(len(lv.vars)))
-					bv.Set(npos)
-				}
-
-				uevar, varkill := bv0, bv0
-				if effect&Uevar != 0 {
-					uevar = bv
-				}
-				if effect&Varkill != 0 {
-					varkill = bv
-				}
-
-				fmt.Printf("%v\n", p)
-				printvars("uevar", uevar, lv.vars)
-				printvars("varkill", varkill, lv.vars)
-				printvars("livein", livein, lv.vars)
-				printvars("liveout", liveout, lv.vars)
-			}
 
 			if issafepoint(p) {
 				// Found an interesting instruction, record the
 				// corresponding liveness information.
 
-				// Useful sanity check: on entry to the function,
-				// the only things that can possibly be live are the
-				// input parameters.
-				if p.As == obj.ATEXT {
-					for j := int32(0); j < liveout.n; j++ {
-						if !liveout.Get(j) {
-							continue
-						}
-						n := lv.vars[j]
-						if n.Class != PPARAM {
-							yyerrorl(p.Pos, "internal error: %v %L recorded as live on entry, p.Pc=%v", Curfn.Func.Nname, n, p.Pc)
-						}
-					}
-				}
-
 				// Record live pointers.
 				args := lv.argslivepointers[pos]
-
 				locals := lv.livepointers[pos]
 				onebitlivepointermap(lv, liveout, lv.vars, args, locals)
 
@@ -1486,6 +1433,43 @@ func livenessepilogue(lv *Liveness) {
 				}
 
 				pos--
+			}
+
+			// Propagate liveness information
+			npos, effect := lv.progeffects(p)
+			if effect&Varkill != 0 {
+				liveout.Unset(npos)
+			}
+			if effect&Uevar != 0 {
+				liveout.Set(npos)
+			}
+
+			if debuglive >= 3 && issafepoint(p) {
+				bv0 := bvalloc(int32(len(lv.vars)))
+
+				var bv bvec
+				if effect != 0 {
+					bv = bvalloc(int32(len(lv.vars)))
+					bv.Set(npos)
+				}
+
+				uevar, varkill := bv0, bv0
+				if effect&Uevar != 0 {
+					uevar = bv
+				}
+				if effect&Varkill != 0 {
+					varkill = bv
+				}
+
+				fmt.Printf("%v\n", p)
+				printvars("uevar", uevar, lv.vars)
+				printvars("varkill", varkill, lv.vars)
+
+				// variable is called liveout, but at
+				// this point it's the liveout for the
+				// *next* instruction; i.e., this
+				// instruction's livein.
+				printvars("livein", liveout, lv.vars)
 			}
 		}
 
