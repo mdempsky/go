@@ -77,8 +77,7 @@ type Liveness struct {
 
 	// An array with a bit vector for each safe point tracking live pointers
 	// in the arguments and locals area, indexed by bb.rpo.
-	argslivepointers []bvec
-	livepointers     []bvec
+	livevars []bvec
 
 	cache progeffectscache
 }
@@ -901,22 +900,9 @@ func livenessepilogue(lv *Liveness) {
 			// value we are tracking.
 
 			// Live stuff first.
-			args := bvalloc(argswords())
-
-			lv.argslivepointers = append(lv.argslivepointers, args)
-			locals := bvalloc(localswords())
-			lv.livepointers = append(lv.livepointers, locals)
-
-			if debuglive >= 3 {
-				printvars("avarinitany", any, lv.vars)
-			}
-
-			// Record any values with an "address taken" reaching
-			// this code position as live. Must do now instead of below
-			// because the any/all calculation requires walking forward
-			// over the block (as this loop does), while the liveout
-			// requires walking backward (as the next loop does).
-			onebitlivepointermap(lv, any, lv.vars, args, locals)
+			live := bvalloc(nvars)
+			live.Copy(any)
+			lv.livevars = append(lv.livevars, live)
 		}
 
 		// Walk forward through the basic block instructions and
@@ -958,27 +944,13 @@ func livenessepilogue(lv *Liveness) {
 				// value we are tracking.
 
 				// Live stuff first.
-				args := bvalloc(argswords())
-
-				lv.argslivepointers = append(lv.argslivepointers, args)
-				locals := bvalloc(localswords())
-				lv.livepointers = append(lv.livepointers, locals)
-
-				if debuglive >= 3 {
-					fmt.Printf("%v\n", v)
-					printvars("avarinitany", any, lv.vars)
-				}
-
-				// Record any values with an "address taken" reaching
-				// this code position as live. Must do now instead of below
-				// because the any/all calculation requires walking forward
-				// over the block (as this loop does), while the liveout
-				// requires walking backward (as the next loop does).
-				onebitlivepointermap(lv, any, lv.vars, args, locals)
+				live := bvalloc(nvars)
+				live.Copy(any)
+				lv.livevars = append(lv.livevars, live)
 			}
 		}
 
-		bb.lastbitmapindex = len(lv.livepointers) - 1
+		bb.lastbitmapindex = len(lv.livevars) - 1
 	}
 
 	for _, b := range lv.f.Blocks {
@@ -1001,13 +973,8 @@ func livenessepilogue(lv *Liveness) {
 				// corresponding liveness information.
 
 				// Record live pointers.
-				args := lv.argslivepointers[pos]
-				locals := lv.livepointers[pos]
-				onebitlivepointermap(lv, liveout, lv.vars, args, locals)
-
-				// Mark pparamout variables (as described above)
-				onebitlivepointermap(lv, livedefer, lv.vars, args, locals)
-
+				lv.livevars[pos].Or(lv.livevars[pos], liveout)
+				lv.livevars[pos].Or(lv.livevars[pos], livedefer)
 				lv.callpos[v] = pos
 				pos--
 			}
@@ -1056,9 +1023,7 @@ func livenessepilogue(lv *Liveness) {
 			}
 
 			// Record live pointers.
-			args := lv.argslivepointers[pos]
-			locals := lv.livepointers[pos]
-			onebitlivepointermap(lv, liveout, lv.vars, args, locals)
+			lv.livevars[pos].Or(lv.livevars[pos], liveout)
 		}
 	}
 
@@ -1102,7 +1067,7 @@ func livenesscompact(lv *Liveness) {
 	// Linear probing hash table of bitmaps seen so far.
 	// The hash table has 4n entries to keep the linear
 	// scan short. An entry of -1 indicates an empty slot.
-	n := len(lv.livepointers)
+	n := len(lv.livevars)
 
 	tablesize := 4 * n
 	table := make([]int, tablesize)
@@ -1124,18 +1089,16 @@ func livenesscompact(lv *Liveness) {
 	// under the new index, and add entry to hash table.
 	// If already seen, record earlier index in remap and free bitmaps.
 	for i := 0; i < n; i++ {
-		local := lv.livepointers[i]
-		arg := lv.argslivepointers[i]
-		h := hashbitmap(hashbitmap(H0, local), arg) % uint32(tablesize)
+		live := lv.livevars[i]
+		h := hashbitmap(H0, live) % uint32(tablesize)
 
 		for {
 			j := table[h]
 			if j < 0 {
 				break
 			}
-			jlocal := lv.livepointers[j]
-			jarg := lv.argslivepointers[j]
-			if local.Eq(jlocal) && arg.Eq(jarg) {
+			jlive := lv.livevars[j]
+			if live.Eq(jlive) {
 				remap[i] = j
 				goto Next
 			}
@@ -1148,8 +1111,7 @@ func livenesscompact(lv *Liveness) {
 
 		table[h] = uniq
 		remap[i] = uniq
-		lv.livepointers[uniq] = local
-		lv.argslivepointers[uniq] = arg
+		lv.livevars[uniq] = live
 		uniq++
 	Next:
 	}
@@ -1160,11 +1122,9 @@ func livenesscompact(lv *Liveness) {
 	// array so that we can tell where the coalesced bitmaps stop
 	// and so that we don't double-free when cleaning up.
 	for j := uniq; j < n; j++ {
-		lv.livepointers[j] = bvec{}
-		lv.argslivepointers[j] = bvec{}
+		lv.livevars[j] = bvec{}
 	}
-	lv.livepointers = lv.livepointers[:uniq]
-	lv.argslivepointers = lv.argslivepointers[:uniq]
+	lv.livevars = lv.livevars[:uniq]
 
 	// Rewrite PCDATA instructions to use new numbering.
 	var prev, prev2, prev3 *obj.Prog
@@ -1223,10 +1183,10 @@ func livenesscompact(lv *Liveness) {
 			} else {
 				fmt.Fprintf(&buf, "entry to %s:", ((p.From.Node).(*Node)).Sym.Name)
 			}
-			args, locals := lv.argslivepointers[pos], lv.livepointers[pos]
+			live := lv.livevars[pos]
 			anylive := false
-			for _, n := range lv.vars {
-				if islive(n, args, locals) {
+			for i, n := range lv.vars {
+				if live.Get(int32(i)) {
 					fmt.Fprintf(&buf, " %v", n)
 					anylive = true
 				}
@@ -1283,17 +1243,22 @@ func finishgclocals(sym *Sym) {
 }
 
 func livenessemit(lv *Liveness, argssym, livesym *Sym) {
-	aoff := duint32(argssym, 0, uint32(len(lv.argslivepointers)))   // number of bitmaps
-	aoff = duint32(argssym, aoff, uint32(lv.argslivepointers[0].n)) // number of bits in each bitmap
+	args := bvalloc(argswords())
+	aoff := duint32(argssym, 0, uint32(len(lv.livevars))) // number of bitmaps
+	aoff = duint32(argssym, aoff, uint32(args.n))         // number of bits in each bitmap
 
-	loff := duint32(livesym, 0, uint32(len(lv.livepointers)))   // number of bitmaps
-	loff = duint32(livesym, loff, uint32(lv.livepointers[0].n)) // number of bits in each bitmap
+	locals := bvalloc(localswords())
+	loff := duint32(livesym, 0, uint32(len(lv.livevars))) // number of bitmaps
+	loff = duint32(livesym, loff, uint32(locals.n))       // number of bits in each bitmap
 
-	for i, abv := range lv.argslivepointers {
-		lbv := lv.livepointers[i]
+	for _, live := range lv.livevars {
+		args.Clear()
+		locals.Clear()
 
-		aoff = dbvec(argssym, aoff, abv)
-		loff = dbvec(livesym, loff, lbv)
+		onebitlivepointermap(lv, live, lv.vars, args, locals)
+
+		aoff = dbvec(argssym, aoff, args)
+		loff = dbvec(livesym, loff, locals)
 	}
 
 	finishgclocals(livesym)
