@@ -1148,7 +1148,11 @@ func livenesssolve(lv *Liveness) {
 }
 
 func (lv *Liveness) entryvarinit(bb *BasicBlock, any, all bvec) {
-	if len(bb.pred) == 0 {
+	if bb == lv.cfg[0] {
+		if len(bb.pred) != 0 {
+			Fatalf("entry block has predecessors??")
+		}
+
 		any.Clear()
 		for _, pos := range lv.cache.textavarinit {
 			any.Set(pos)
@@ -1189,6 +1193,10 @@ func (lv *Liveness) exitblockuses(bb *BasicBlock) ([]int32, bool) {
 
 	if prog.As == obj.AUNDEF {
 		return nil, true
+	}
+
+	if len(bb.succ) == 0 {
+		Fatalf("no successors for terminating block??")
 	}
 
 	return nil, false
