@@ -628,10 +628,10 @@ func (lv *Liveness) progeffects(prog *obj.Prog) (uevar, varkill, avarinit []int3
 	}
 
 	if prog.As == obj.ARET {
-		if prog.To.Type == obj.TYPE_NONE {
-			return lv.cache.retuevar, nil, nil
+		if prog.To.Type != obj.TYPE_NONE {
+			Fatalf("weird RET prog: %v", prog)
 		}
-		return nil, nil, nil
+		return lv.cache.retuevar, nil, nil
 	}
 
 	if prog.As == obj.ATEXT {
