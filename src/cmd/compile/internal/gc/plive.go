@@ -31,6 +31,9 @@ const (
 )
 
 type BlockEffect struct {
+	succs []*BlockEffect
+	preds []*BlockEffect
+
 	lastbitmapindex int // for livenessepilogue
 
 	// Summary sets of block effects.
@@ -152,48 +155,11 @@ func iscall(prog *obj.Prog, name *obj.LSym) bool {
 	return name == prog.To.Sym
 }
 
-// Returns true for instructions that call a runtime function implementing a
-// select communication clause.
-
-var selectNames [4]*obj.LSym
-
-func isselectcommcasecall(prog *obj.Prog) bool {
-	if selectNames[0] == nil {
-		selectNames[0] = Linksym(Pkglookup("selectsend", Runtimepkg))
-		selectNames[1] = Linksym(Pkglookup("selectrecv", Runtimepkg))
-		selectNames[2] = Linksym(Pkglookup("selectrecv2", Runtimepkg))
-		selectNames[3] = Linksym(Pkglookup("selectdefault", Runtimepkg))
-	}
-
-	for _, name := range selectNames {
-		if iscall(prog, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// Returns true for call instructions that target runtime·newselect.
-
-var isnewselect_sym *obj.LSym
-
-func isnewselect(prog *obj.Prog) bool {
-	if isnewselect_sym == nil {
-		isnewselect_sym = Linksym(Pkglookup("newselect", Runtimepkg))
-	}
-	return iscall(prog, isnewselect_sym)
-}
-
-// Returns true for call instructions that target runtime·selectgo.
-
-var isselectgocall_sym *obj.LSym
-
-func isselectgocall(prog *obj.Prog) bool {
-	if isselectgocall_sym == nil {
-		isselectgocall_sym = Linksym(Pkglookup("selectgo", Runtimepkg))
-	}
-	return iscall(prog, isselectgocall_sym)
-}
+var (
+	newselect   *obj.LSym
+	selectNames [4]*obj.LSym
+	selectgo    *obj.LSym
+)
 
 var isdeferreturn_sym *obj.LSym
 
@@ -335,6 +301,14 @@ func newliveness(fn *Node, ptxt *obj.Prog, vars []*Node, f *ssa.Func, valueProgs
 		// TODO(mdempsky): Bulk allocate BlockEffects.
 		bb := new(BlockEffect)
 		bes[b.ID] = bb
+
+		for _, succ := range b.Succs {
+			bb.succs = append(bb.succs, bes[succ.Block().ID])
+		}
+		for _, pred := range b.Preds {
+			bb.preds = append(bb.preds, bes[pred.Block().ID])
+		}
+
 		bb.uevar = bulk.next()
 		bb.varkill = bulk.next()
 		bb.livein = bulk.next()
@@ -343,7 +317,60 @@ func newliveness(fn *Node, ptxt *obj.Prog, vars []*Node, f *ssa.Func, valueProgs
 		bb.avarinitany = bulk.next()
 		bb.avarinitall = bulk.next()
 	}
+
+	if newselect == nil {
+		newselect = Linksym(Pkglookup("newselect", Runtimepkg))
+		selectNames[0] = Linksym(Pkglookup("selectsend", Runtimepkg))
+		selectNames[1] = Linksym(Pkglookup("selectrecv", Runtimepkg))
+		selectNames[2] = Linksym(Pkglookup("selectrecv2", Runtimepkg))
+		selectNames[3] = Linksym(Pkglookup("selectdefault", Runtimepkg))
+		selectgo = Linksym(Pkglookup("selectgo", Runtimepkg))
+	}
+
+	for _, b := range f.Blocks {
+		if !blockcallsany(b, newselect) {
+			continue
+		}
+		fmt.Println(b, "calls newselect")
+		var succIDs []ssa.ID
+		for b1 := b; ; {
+			if blockcallsany(b1, selectNames[:]...) {
+				fmt.Println(b1, "calls selectfoo")
+				succIDs = append(succIDs, b1.Succs[0].Block().ID)
+				b1 = b1.Succs[1].Block()
+				continue
+			}
+			if blockcallsany(b1, selectgo) {
+				fmt.Println(b1, "calls selectgo")
+				// Add edges from b1 to each ID in succIDs.
+				bb := bes[b1.ID]
+				for _, succID := range succIDs {
+					bbs := bes[succID]
+					bb.succs = append(bb.succs, bbs)
+					bbs.preds = append(bbs.preds, bb)
+				}
+				break
+			}
+
+			b1 = b1.Succs[0].Block()
+		}
+	}
+
 	return &result
+}
+
+func blockcallsany(b *ssa.Block, syms ...*obj.LSym) bool {
+	for _, v := range b.Values {
+		if v.Op != ssa.OpAMD64CALLstatic {
+			continue
+		}
+		for _, sym := range syms {
+			if v.Aux.(*obj.LSym) == sym {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (lv *Liveness) printeffects(v *ssa.Value, npos int32, effect Effect) {
@@ -794,8 +821,6 @@ func (lv *Liveness) exitblockuses(b *ssa.Block) ([]int32, bool) {
 		// read the out arguments - they won't be set until the new
 		// function runs.
 		return lv.cache.tailuevar, true
-	case ssa.BlockExit:
-		return nil, true
 	}
 
 	return nil, false
