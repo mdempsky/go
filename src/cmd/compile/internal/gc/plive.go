@@ -25,11 +25,6 @@ import (
 	"strings"
 )
 
-const (
-	UNVISITED = 0
-	VISITED   = 1
-)
-
 type BlockEffect struct {
 	succs []*BlockEffect
 	preds []*BlockEffect
@@ -86,14 +81,6 @@ type progeffectscache struct {
 	tailuevar    []int32
 	retuevar     []int32
 	textavarinit []int32
-}
-
-// ProgInfo holds information about the instruction for use
-// by clients such as the compiler. The exact meaning of this
-// data is up to the client and is not interpreted by the cmd/internal/obj/... packages.
-type ProgInfo struct {
-	_     struct{} // to prevent unkeyed literals. Trailing zero-sized field will take space.
-	Flags uint32   // flag bits
 }
 
 // Inserts new after p.
