@@ -831,28 +831,6 @@ func (lv *Liveness) exitblockuses(b *ssa.Block) ([]int32, bool) {
 	return nil, false
 }
 
-// This function is slow but it is only used for generating debug prints.
-// Check whether n is marked live in args/locals.
-func islive(n *Node, args bvec, locals bvec) bool {
-	switch n.Class {
-	case PPARAM, PPARAMOUT:
-		for i := 0; int64(i) < n.Type.Width/int64(Widthptr); i++ {
-			if args.Get(int32(n.Xoffset/int64(Widthptr) + int64(i))) {
-				return true
-			}
-		}
-
-	case PAUTO:
-		for i := 0; int64(i) < n.Type.Width/int64(Widthptr); i++ {
-			if locals.Get(int32((n.Xoffset+stkptrsize)/int64(Widthptr) + int64(i))) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 // Visits all instructions in a basic block and computes a bit vector of live
 // variables at each safe point locations.
 func livenessepilogue(lv *Liveness) {
