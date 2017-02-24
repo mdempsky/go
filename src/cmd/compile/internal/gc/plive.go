@@ -1267,13 +1267,8 @@ func printbitset(printed bool, name string, vars []*Node, bits bvec) bool {
 // first word dumped is the total number of bitmaps. The second word is the
 // length of the bitmaps. All bitmaps are assumed to be of equal length. The
 // remaining bytes are the raw bitmaps.
-func onebitwritesymbol(arr []bvec, sym *Sym) {
-	off := duint32(sym, 0, uint32(len(arr)))  // number of bitmaps
-	off = duint32(sym, off, uint32(arr[0].n)) // number of bits in each bitmap
-	for _, bv := range arr {
-		off = dbvec(sym, off, bv)
-	}
 
+func finishgclocals(sym *Sym) {
 	ls := Linksym(sym)
 	ls.Name = fmt.Sprintf("gclocals·%x", md5.Sum(ls.P))
 	ls.Set(obj.AttrDuplicateOK, true)
@@ -1283,13 +1278,26 @@ func onebitwritesymbol(arr []bvec, sym *Sym) {
 		sym.Lsym = ls2
 	} else {
 		Ctxt.Hash[sv] = ls
-		ggloblsym(sym, int32(off), obj.RODATA)
+		ggloblsym(sym, int32(ls.Size), obj.RODATA)
 	}
 }
 
 func livenessemit(lv *Liveness, argssym, livesym *Sym) {
-	onebitwritesymbol(lv.livepointers, livesym)
-	onebitwritesymbol(lv.argslivepointers, argssym)
+	aoff := duint32(argssym, 0, uint32(len(lv.argslivepointers)))   // number of bitmaps
+	aoff = duint32(argssym, aoff, uint32(lv.argslivepointers[0].n)) // number of bits in each bitmap
+
+	loff := duint32(livesym, 0, uint32(len(lv.livepointers)))   // number of bitmaps
+	loff = duint32(livesym, loff, uint32(lv.livepointers[0].n)) // number of bits in each bitmap
+
+	for i, abv := range lv.argslivepointers {
+		lbv := lv.livepointers[i]
+
+		aoff = dbvec(argssym, aoff, abv)
+		loff = dbvec(livesym, loff, lbv)
+	}
+
+	finishgclocals(livesym)
+	finishgclocals(argssym)
 }
 
 func printprog(p *obj.Prog) {
