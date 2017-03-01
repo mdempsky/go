@@ -185,11 +185,9 @@ func TestTraceSymbolize(t *testing.T) {
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoBlockSelect, []frame{
-			{"runtime.selectgo", 0},
 			{"runtime/trace_test.TestTraceSymbolize.func6", 59},
 		}},
 		{trace.EvGoUnblock, []frame{
-			{"runtime.selectgo", 0},
 			{"runtime/trace_test.TestTraceSymbolize", 112},
 			{"testing.tRunner", 0},
 		}},
