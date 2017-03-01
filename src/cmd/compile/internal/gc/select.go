@@ -4,6 +4,8 @@
 
 package gc
 
+import "fmt"
+
 // select
 func typecheckselect(sel *Node) {
 	var ncase *Node
@@ -96,11 +98,6 @@ func walkselect(sel *Node) {
 	i := sel.List.Len()
 
 	// optimization: zero-case select
-	var init []*Node
-	var r *Node
-	var n *Node
-	var var_ *Node
-	var selv *Node
 	if i == 0 {
 		sel.Nbody.Set1(mkcall("block", nil, nil))
 		goto out
@@ -173,7 +170,7 @@ func walkselect(sel *Node) {
 	// this rewrite is used by both the general code and the next optimization.
 	for _, cas := range sel.List.Slice() {
 		setlineno(cas)
-		n = cas.Left
+		n := cas.Left
 		if n == nil {
 			continue
 		}
@@ -191,9 +188,7 @@ func walkselect(sel *Node) {
 				n.List.SetFirst(typecheck(n.List.First(), Erv))
 			}
 
-			if n.Left == nil {
-				n.Left = nodnil()
-			} else {
+			if n.Left != nil {
 				n.Left = nod(OADDR, n.Left, nil)
 				n.Left = typecheck(n.Left, Erv)
 			}
@@ -250,67 +245,116 @@ func walkselect(sel *Node) {
 		goto out
 	}
 
-	init = sel.Ninit.Slice()
-	sel.Ninit.Set(nil)
-
-	// generate sel-struct
-	setlineno(sel)
-
-	selv = temp(selecttype(int32(sel.Xoffset)))
-	r = nod(OAS, selv, nil)
-	r = typecheck(r, Etop)
-	init = append(init, r)
-	var_ = conv(conv(nod(OADDR, selv, nil), Types[TUNSAFEPTR]), ptrto(Types[TUINT8]))
-	r = mkcall("newselect", nil, nil, var_, nodintconst(selv.Type.Width), nodintconst(sel.Xoffset))
-	r = typecheck(r, Etop)
-	init = append(init, r)
-	// register cases
-	for _, cas := range sel.List.Slice() {
-		setlineno(cas)
-		n = cas.Left
-		r = nod(OIF, nil, nil)
-		r.Ninit.Set(cas.Ninit.Slice())
-		cas.Ninit.Set(nil)
-		if n != nil {
-			r.Ninit.AppendNodes(&n.Ninit)
-			n.Ninit.Set(nil)
-		}
-
-		if n == nil {
-			// selectdefault(sel *byte);
-			r.Left = mkcall("selectdefault", Types[TBOOL], &r.Ninit, var_)
-		} else {
-			switch n.Op {
-			default:
-				Fatalf("select %v", n.Op)
-
-				// selectsend(sel *byte, hchan *chan any, elem *any) (selected bool);
-			case OSEND:
-				r.Left = mkcall1(chanfn("selectsend", 2, n.Left.Type), Types[TBOOL], &r.Ninit, var_, n.Left, n.Right)
-
-				// selectrecv(sel *byte, hchan *chan any, elem *any) (selected bool);
-			case OSELRECV:
-				r.Left = mkcall1(chanfn("selectrecv", 2, n.Right.Left.Type), Types[TBOOL], &r.Ninit, var_, n.Right.Left, n.Left)
-
-				// selectrecv2(sel *byte, hchan *chan any, elem *any, received *bool) (selected bool);
-			case OSELRECV2:
-				r.Left = mkcall1(chanfn("selectrecv2", 2, n.Right.Left.Type), Types[TBOOL], &r.Ninit, var_, n.Right.Left, n.Left, n.List.First())
+	{
+		defer func() {
+			if err := recover(); err != nil {
+				fmt.Println(linestr(sel.Pos), sel)
+				panic(err)
 			}
+		}()
+
+		init := sel.Ninit.Slice()
+		sel.Ninit.Set(nil)
+
+		// generate sel-struct
+		setlineno(sel)
+		typ := typArray(scasetype(), sel.Xoffset)
+		selv := temp(typ)
+		lockorderarr := temp(typArray(Types[TUINT16], sel.Xoffset))
+		pollorderarr := temp(typArray(Types[TUINT16], sel.Xoffset))
+
+		lit := nod(OCOMPLIT, nil, typenod(typ))
+		for _, cas := range sel.List.Slice() {
+			setlineno(cas)
+
+			init = append(init, cas.Ninit.Slice()...)
+			cas.Ninit.Set(nil)
+
+			const (
+				caseRecv    = 1
+				caseSend    = 2
+				caseDefault = 3
+			)
+
+			var elem, hchan, receivedp *Node
+			var kind int64 = caseDefault
+
+			if n := cas.Left; n != nil {
+				init = append(init, n.Ninit.Slice()...)
+				n.Ninit.Set(nil)
+
+				switch n.Op {
+				case OSEND:
+					elem, hchan = n.Right, n.Left
+					kind = caseSend
+				case OSELRECV:
+					elem, hchan = n.Left, n.Right.Left
+					kind = caseRecv
+				case OSELRECV2:
+					elem, hchan, receivedp = n.Left, n.Right.Left, n.List.First()
+					kind = caseRecv
+				}
+			}
+
+			if elem != nil {
+				elem = nod(OCONVNOP, elem, nil)
+				elem.Type = Types[TUNSAFEPTR]
+			} else {
+				elem = nodnil()
+			}
+
+			hchan = nod(OCONVNOP, hchan, nil)
+			hchan.Type = Types[TUNSAFEPTR]
+
+			if receivedp != nil {
+				receivedp = nod(OCONVNOP, receivedp, nil)
+				receivedp.Type = ptrto(Types[TBOOL])
+			} else {
+				receivedp = nodnil()
+			}
+
+			x := nod(OCOMPLIT, nil, nil)
+			x.List.Append(elem, hchan, receivedp, nodintconst(kind), nodintconst(0))
+			lit.List.Append(x)
 		}
 
-		// selv is no longer alive after use.
-		r.Nbody.Append(nod(OVARKILL, selv, nil))
-
-		r.Nbody.AppendNodes(&cas.Nbody)
-		r.Nbody.Append(nod(OBREAK, nil, nil))
+		setlineno(sel)
+		r := nod(OAS, selv, lit)
+		r = typecheck(r, Etop)
 		init = append(init, r)
+
+		chosen := temp(Types[TINT])
+		r = nod(OAS, chosen, mkcall("selectgo", Types[TINT], nil,
+			convUnsafePointer(nod(OADDR, nod(OINDEX, selv, nodintconst(0)), nil)),
+			nod(OADDR, nod(OINDEX, lockorderarr, nodintconst(0)), nil),
+			nod(OADDR, nod(OINDEX, pollorderarr, nodintconst(0)), nil),
+			nodintconst(sel.Xoffset),
+		))
+		r = typecheck(r, Etop)
+		init = append(init, r)
+
+		init = append(init,
+			nod(OVARKILL, selv, nil),
+			nod(OVARKILL, lockorderarr, nil),
+			nod(OVARKILL, pollorderarr, nil),
+		)
+
+		// Dispatch cases.
+		// TODO(mdempsky): Use a switch / jump table.
+		for i, cas := range sel.List.Slice() {
+			setlineno(cas)
+
+			cond := nod(OEQ, chosen, nodintconst(int64(i)))
+			cond = typecheck(cond, Erv)
+
+			r = nod(OIF, cond, nil)
+			r.Nbody.AppendNodes(&cas.Nbody)
+			r.Nbody.Append(nod(OBREAK, nil, nil))
+			init = append(init, r)
+		}
+
+		sel.Nbody.Set(init)
 	}
-
-	// run the select
-	setlineno(sel)
-
-	init = append(init, mkcall("selectgo", nil, nil, var_))
-	sel.Nbody.Set(init)
 
 out:
 	sel.List.Set(nil)
@@ -318,37 +362,23 @@ out:
 	lineno = lno
 }
 
-// Keep in sync with src/runtime/select.go.
-func selecttype(size int32) *Type {
-	// TODO(dvyukov): it's possible to generate Scase only once
-	// and then cache; and also cache Select per size.
+func convUnsafePointer(n *Node) *Node {
+	r := nod(OCONVNOP, n, nil)
+	r.Type = ptrto(Types[TUINT8])
+	return r
+}
 
+// Keep in sync with src/runtime/select.go.
+func scasetype() *Type {
 	scase := nod(OTSTRUCT, nil, nil)
-	scase.List.Append(nod(ODCLFIELD, newname(lookup("elem")), typenod(ptrto(Types[TUINT8]))))
-	scase.List.Append(nod(ODCLFIELD, newname(lookup("chan")), typenod(ptrto(Types[TUINT8]))))
-	scase.List.Append(nod(ODCLFIELD, newname(lookup("pc")), typenod(Types[TUINTPTR])))
+	scase.List.Append(nod(ODCLFIELD, newname(lookup("elem")), typenod(Types[TUNSAFEPTR])))
+	scase.List.Append(nod(ODCLFIELD, newname(lookup("chan")), typenod(Types[TUNSAFEPTR])))
+	scase.List.Append(nod(ODCLFIELD, newname(lookup("receivedp")), typenod(ptrto(Types[TBOOL]))))
 	scase.List.Append(nod(ODCLFIELD, newname(lookup("kind")), typenod(Types[TUINT16])))
-	scase.List.Append(nod(ODCLFIELD, newname(lookup("so")), typenod(Types[TUINT16])))
-	scase.List.Append(nod(ODCLFIELD, newname(lookup("receivedp")), typenod(ptrto(Types[TUINT8]))))
-	scase.List.Append(nod(ODCLFIELD, newname(lookup("releasetime")), typenod(Types[TUINT64])))
+	scase.List.Append(nod(ODCLFIELD, newname(lookup("releasetime")), typenod(Types[TINT64])))
 	scase = typecheck(scase, Etype)
 	scase.Type.Noalg = true
 	scase.Type.Local = true
 
-	sel := nod(OTSTRUCT, nil, nil)
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("tcase")), typenod(Types[TUINT16])))
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("ncase")), typenod(Types[TUINT16])))
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("pollorder")), typenod(ptrto(Types[TUINT8]))))
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("lockorder")), typenod(ptrto(Types[TUINT8]))))
-	arr := nod(OTARRAY, nodintconst(int64(size)), scase)
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("scase")), arr))
-	arr = nod(OTARRAY, nodintconst(int64(size)), typenod(Types[TUINT16]))
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("lockorderarr")), arr))
-	arr = nod(OTARRAY, nodintconst(int64(size)), typenod(Types[TUINT16]))
-	sel.List.Append(nod(ODCLFIELD, newname(lookup("pollorderarr")), arr))
-	sel = typecheck(sel, Etype)
-	sel.Type.Noalg = true
-	sel.Type.Local = true
-
-	return sel.Type
+	return scase.Type
 }

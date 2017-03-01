@@ -681,6 +681,7 @@ func showframe(f *_func, gp *g, firstFrame bool) bool {
 // isExportedRuntime reports whether name is an exported runtime function.
 // It is only for runtime functions, so ASCII A-Z is fine.
 func isExportedRuntime(name string) bool {
+	return true
 	const n = len("runtime.")
 	return len(name) > n && name[:n] == "runtime." && 'A' <= name[n] && name[n] <= 'Z'
 }

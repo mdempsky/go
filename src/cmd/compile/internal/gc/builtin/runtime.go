@@ -10,6 +10,8 @@
 
 package runtime
 
+import "unsafe"
+
 // emitted by compiler, not referred to by go programs
 
 func newobject(typ *byte) *any
@@ -117,12 +119,7 @@ func selectnbsend(chanType *byte, hchan chan<- any, elem *any) bool
 func selectnbrecv(chanType *byte, elem *any, hchan <-chan any) bool
 func selectnbrecv2(chanType *byte, elem *any, received *bool, hchan <-chan any) bool
 
-func newselect(sel *byte, selsize int64, size int32)
-func selectsend(sel *byte, hchan chan<- any, elem *any) (selected bool)
-func selectrecv(sel *byte, hchan <-chan any, elem *any) (selected bool)
-func selectrecv2(sel *byte, hchan <-chan any, elem *any, received *bool) (selected bool)
-func selectdefault(sel *byte) (selected bool)
-func selectgo(sel *byte)
+func selectgo(sel unsafe.Pointer, lockorder *uint16, pollorder *uint16, ncase int) int
 func block()
 
 func makeslice(typ *byte, len int, cap int) (ary []any)
