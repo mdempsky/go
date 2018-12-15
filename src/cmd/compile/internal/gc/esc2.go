@@ -578,7 +578,7 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 
 		// If there is a receiver, it also leaks to heap.
 		if call.Op != OCALLFUNC {
-			recvK = e.tagHole(ks, fntype.Recv())
+			recvK = e.tagHole(ks, indirect, fntype.Recv())
 		} else if indirect { // indirect and OCALLFUNC = could be captured variables, too. (#14409)
 			for _, k := range ks {
 				e.value(k.deref(call, "captured by called closure"), fn)
@@ -586,7 +586,7 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		}
 
 		for _, param := range fntype.Params().FieldSlice() {
-			paramKs = append(paramKs, e.tagHole(ks, param))
+			paramKs = append(paramKs, e.tagHole(ks, indirect, param))
 		}
 	}
 
@@ -634,12 +634,19 @@ func (e *EscState) paramHole(param *types.Field) EscHole {
 	return EscHole{dst: e.oldLoc(asNode(param.Nname))}
 }
 
-func (e *EscState) tagHole(ks []EscHole, param *types.Field) EscHole {
+func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscHole {
 	tag := param.Note
 	if debugLevel(2) {
 		fmt.Printf("tagHole: [%v] = %q\n", ks, tag)
 	}
 
+	if indirect {
+		// TODO(mdempsky): Perhaps overly conservative. I
+		// don't think we need to guarantee that f(uintptr(p))
+		// works if f is an indirect call to a uintptrescapes
+		// function, for example.
+		e.heapHole()
+	}
 	if tag == "" && !types.Haspointers(param.Type) {
 		return e.discardHole()
 	}
