@@ -1025,7 +1025,7 @@ func (e *EscState) cleanup() {
 			}
 		}
 		if n.Op == ONAME && n.Class() == PPARAM && types.Haspointers(n.Type) {
-			want := n.Esc
+			want := optimizeReturns(n.Esc)
 			if want == EscReturn|EscContentEscapes {
 				// esc.go leaves EscReturn sometimes
 				// when it doesn't matter.
@@ -1046,6 +1046,18 @@ func (e *EscState) cleanup() {
 }
 
 func finalizeEsc(esc uint16) uint16 {
+	esc = optimizeReturns(esc)
+
+	if esc>>EscReturnBits != 0 {
+		esc |= EscReturn
+	} else if esc&EscMask == 0 {
+		esc |= EscNone
+	}
+
+	return esc
+}
+
+func optimizeReturns(esc uint16) uint16 {
 	if esc&EscContentEscapes != 0 {
 		// EscContentEscapes represents a path of length 1
 		// from the heap. No point in keeping paths of equal
@@ -1057,12 +1069,5 @@ func finalizeEsc(esc uint16) uint16 {
 			}
 		}
 	}
-
-	if esc>>EscReturnBits != 0 {
-		esc |= EscReturn
-	} else if esc&EscMask == 0 {
-		esc |= EscNone
-	}
-
 	return esc
 }
