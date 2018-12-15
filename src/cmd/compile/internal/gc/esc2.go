@@ -423,9 +423,12 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 
 	case OCOPY:
 		e.discard(n.Left)
-		if !n.Right.Type.IsString() {
-			e.assignHeapDeref(n.Right, "copied slice", n)
+
+		k2 := e.discardHole()
+		if n.Right.Type.IsSlice() && types.Haspointers(n.Right.Type.Elem()) {
+			k2 = e.heapHole().deref(n, "copied slice")
 		}
+		e.value(k2, n.Right)
 	}
 }
 
