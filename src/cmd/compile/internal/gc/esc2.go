@@ -13,8 +13,6 @@ import (
 	"strings"
 )
 
-// TODO(mdempsky): Handle conversions and untyped values better.
-
 // TODO(mdempsky): Document how to write and maintain code.
 //
 // In particular, it's important to always visit the entire AST. That
