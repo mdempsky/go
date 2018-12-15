@@ -1058,12 +1058,26 @@ func debugLevel(x int) bool {
 
 func (e *EscState) cleanup() {
 	for n, loc := range escLocs {
-		if n.Op == ODDDARG && n.Right.Right != nil {
-			n = n.Right.Right // get esc.go's ODDDARG
+		var esc uint16 = EscUnknown
+		if n.Op == ODDDARG {
+			// esc.go doesn't create ODDDARG for all
+			// calls. If it's missing, then walk.go treats
+			// it as EscUnknown.
+			if x := n.Right.Right; x != nil {
+				esc = x.Esc
+			}
+		} else if n.Op == ONAME {
+			if n.Class() == PAUTOHEAP {
+				esc = EscHeap
+			} else {
+				esc = EscNone
+			}
+		} else {
+			esc = n.Esc
 		}
-		escaped := n.Op != ONAME && n.Esc == EscHeap || n.Op == ONAME && n.Class() == PAUTOHEAP
+		escaped := esc != EscNone
 		if escaped != loc.escapes {
-			Warnl(n.Pos, "noooo: %v is 0x%x, but %v", n, n.Esc, loc.escapes)
+			Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v", n, n.Op, esc, loc.escapes)
 		}
 
 		if n.Op == ONAME && n.Class() == PAUTOHEAP {
