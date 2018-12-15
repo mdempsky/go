@@ -637,7 +637,7 @@ func (e *EscState) paramHole(param *types.Field) EscHole {
 func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscHole {
 	tag := param.Note
 	if debugLevel(2) {
-		fmt.Printf("tagHole: [%v] = %q\n", ks, tag)
+		fmt.Printf("tagHole: [%v] = %q, indirect=%v\n", ks, tag, indirect)
 	}
 
 	if indirect {
@@ -645,7 +645,7 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscH
 		// don't think we need to guarantee that f(uintptr(p))
 		// works if f is an indirect call to a uintptrescapes
 		// function, for example.
-		e.heapHole()
+		return e.heapHole()
 	}
 	if tag == "" && !types.Haspointers(param.Type) {
 		return e.discardHole()
@@ -726,14 +726,12 @@ func (k EscHole) shift(delta int, where *Node, why string) EscHole {
 }
 
 func (e *EscState) dcl(n *Node) EscHole {
-	return EscHole{
-		dst: e.newLoc(n),
-	}
+	return e.spill(e.discardHole(), n)
 }
 
 func (e *EscState) spill(k EscHole, n *Node) EscHole {
-	// TODO(mdempsky): Cleanup.
-	if n.Esc != EscHeap && n.Type != nil &&
+	// TODO(mdempsky): Cleanup. Maybe move to newLoc?
+	if /*n.Esc != EscHeap &&*/ n.Type != nil &&
 		(n.Type.Width > maxStackVarSize ||
 			(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
 			n.Op == OMAKESLICE && !isSmallMakeSlice(n)) {
@@ -885,8 +883,6 @@ func (e *EscState) setup(all []*Node) {
 				if dcl.Class() == PPARAM {
 					if fn.Nbody.Len() == 0 && !fn.Noescape() {
 						loc.paramEsc = EscHeap
-					} else {
-						loc.paramEsc = EscNone
 					}
 				}
 			}
@@ -940,14 +936,14 @@ func (e *EscState) walk(root *EscLocation) {
 				e.flow(EscHole{dst: &HeapLoc}, p)
 			}
 		}
-		if p.n != nil && p.n.Op == ONAME && p.n.Class() == PPARAM {
+		if p.n != nil && p.n.Op == ONAME && p.n.Class() == PPARAM && p.paramEsc != EscHeap {
 			if root == &HeapLoc {
 				if base > 0 {
 					p.paramEsc |= EscContentEscapes
 				} else {
 					p.paramEsc = EscHeap
 				}
-			} else if root.n != nil && root.n.Op == ONAME && root.n.Class() == PPARAMOUT && root.n.Name.Curfn == p.n.Name.Curfn && p.paramEsc != EscHeap {
+			} else if root.n != nil && root.n.Op == ONAME && root.n.Class() == PPARAMOUT && root.n.Name.Curfn == p.n.Name.Curfn {
 				x := 1 + uint16(base)
 				if base > maxEncodedLevel {
 					x = 1 + uint16(maxEncodedLevel)
@@ -958,9 +954,6 @@ func (e *EscState) walk(root *EscLocation) {
 					// Encoding spill.
 					p.paramEsc = EscHeap
 				} else if old := (p.paramEsc >> shift) & bitsMaskForTag; old == 0 || x < old {
-					if p.paramEsc&EscMask == EscNone {
-						p.paramEsc = EscReturn | (p.paramEsc & EscContentEscapes)
-					}
 					p.paramEsc = (p.paramEsc &^ (bitsMaskForTag << shift)) | (x << shift)
 				}
 			}
@@ -998,8 +991,16 @@ func (e *EscState) cleanup() {
 			}
 		}
 		if n.Op == ONAME && n.Class() == PPARAM && types.Haspointers(n.Type) {
-			if n.Esc != loc.paramEsc {
-				Warnl(n.Pos, "waahh: %v is 0x%x, but 0x%x", n, n.Esc, loc.paramEsc)
+			want := n.Esc
+			if want == EscReturn|EscContentEscapes {
+				// esc.go leaves EscReturn sometimes
+				// when it doesn't matter.
+				want = EscNone | EscContentEscapes
+			}
+
+			loc.paramEsc = finalizeEsc(loc.paramEsc)
+			if want != loc.paramEsc {
+				Warnl(n.Pos, "waahh: %v is 0x%x, but 0x%x", n, want, loc.paramEsc)
 			}
 		}
 	}
@@ -1008,4 +1009,26 @@ func (e *EscState) cleanup() {
 
 	HeapLoc = EscLocation{}
 	BlankLoc = EscLocation{}
+}
+
+func finalizeEsc(esc uint16) uint16 {
+	if esc&EscContentEscapes != 0 {
+		// EscContentEscapes represents a path of length 1
+		// from the heap. No point in keeping paths of equal
+		// or longer length to result parameters.
+		for i := 0; i < 16; i++ {
+			shift := uint(EscReturnBits + i*bitsPerOutputInTag)
+			if x := (esc >> shift) & bitsMaskForTag; x >= 2 {
+				esc &^= bitsMaskForTag << shift
+			}
+		}
+	}
+
+	if esc>>EscReturnBits != 0 {
+		esc |= EscReturn
+	} else if esc&EscMask == 0 {
+		esc |= EscNone
+	}
+
+	return esc
 }
