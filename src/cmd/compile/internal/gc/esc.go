@@ -181,6 +181,7 @@ func (v *bottomUpVisitor) visitcode(n *Node, min uint32) uint32 {
 
 func escapes(all []*Node) {
 	visitBottomUp(all, escAnalyze)
+	escfinished()
 }
 
 const (
@@ -329,6 +330,9 @@ type NodeEscState struct {
 	Maxextraloopdepth int32
 }
 
+var allocState, maxState, totalState int
+var allocFlow, maxFlow, totalFlow int
+
 func (e *EscState) nodeEscState(n *Node) *NodeEscState {
 	if nE, ok := n.Opt().(*NodeEscState); ok {
 		return nE
@@ -339,6 +343,7 @@ func (e *EscState) nodeEscState(n *Node) *NodeEscState {
 	nE := &NodeEscState{
 		Curfn: Curfn,
 	}
+	allocState++
 	n.SetOpt(nE)
 	e.opts = append(e.opts, n)
 	return nE
@@ -1843,6 +1848,7 @@ func (e *EscState) escflows(dst, src *Node, why *EscStep) {
 
 	e.edgecount++
 
+	allocFlow++
 	if why == nil {
 		dstE.Flowsrc = append(dstE.Flowsrc, EscStep{src: src})
 	} else {

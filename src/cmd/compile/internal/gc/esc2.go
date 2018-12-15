@@ -843,6 +843,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 		n:         n,
 		loopDepth: int(e.loopdepth),
 	}
+	allocLocs++
 	if n != nil {
 		escLocs[n] = loc
 	}
@@ -910,6 +911,8 @@ func (e *EscState) flow(k EscHole, src_ *EscLocation) {
 	}
 
 	// TODO(mdempsky): Deduplicate edges?
+
+	allocEdges++
 
 	dst.edges = append(dst.edges, EscEdge{src: src_, derefs: k.derefs})
 	if debugLevel(2) {
@@ -1083,10 +1086,42 @@ func (e *EscState) cleanup() {
 		}
 	}
 
+	if allocLocs > maxLocs {
+		maxLocs = allocLocs
+	}
+	totalLocs += allocLocs
+
+	if allocEdges > maxEdges {
+		maxEdges = allocEdges
+	}
+	totalEdges += allocEdges
+
+	if allocState > maxState {
+		maxState = allocState
+	}
+	totalState += allocState
+
+	if allocFlow > maxFlow {
+		maxFlow = allocFlow
+	}
+	totalFlow += allocFlow
+
 	escLocs = map[*Node]*EscLocation{}
 
 	HeapLoc = EscLocation{}
 	BlankLoc = EscLocation{}
+}
+
+var allocLocs, maxLocs, totalLocs int
+var allocEdges, maxEdges, totalEdges int
+
+func escfinished() {
+	if debugLevel(1) {
+		fmt.Printf("locations:   %d\t%d\n", totalLocs, maxLocs)
+		fmt.Printf("edges:       %d\t%d\n", totalEdges, maxEdges)
+		fmt.Printf("state:       %d\t%d\n", totalState, maxState)
+		fmt.Printf("flow:        %d\t%d\n", totalFlow, maxFlow)
+	}
 }
 
 func finalizeEsc(esc uint16) uint16 {
