@@ -106,7 +106,7 @@ func (e *EscState) stmt(n *Node) {
 			k = ks[1]
 		}
 		if n.Right.Type.IsArray() {
-			e.value(k.copy(n, "range"), n.Right)
+			e.value(k.note(n, "range"), n.Right)
 		} else {
 			e.value(k.deref(n, "range-deref"), n.Right)
 		}
@@ -123,7 +123,7 @@ func (e *EscState) stmt(n *Node) {
 				k := e.dcl(cv)
 				// TODO(mdempsky): Implicit ODOTTYPE.
 				if types.Haspointers(cv.Type) {
-					e.value(k.copy(n, "switch case"), n.Left.Right)
+					e.value(k.note(n, "switch case"), n.Left.Right)
 				}
 			}
 
@@ -288,12 +288,12 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
 	case ODOT, ODOTTYPE, ODOTTYPE2, ODOTMETH, ODOTINTER:
 		// TODO(mdempsky): deref for !isdirectiface types.
-		e.value(k.copy(n, "dot"), n.Left)
+		e.value(k.note(n, "dot"), n.Left)
 	case ODOTPTR:
 		e.value(k.deref(n, "dot of pointer"), n.Left) // "dot of pointer"
 	case OINDEX:
 		if n.Left.Type.IsArray() {
-			e.value(k.copy(n, "fixed-array-index-of"), n.Left)
+			e.value(k.note(n, "fixed-array-index-of"), n.Left)
 		} else {
 			// TODO(mdempsky): Fix why reason text.
 			e.value(k.deref(n, "dot of pointer"), n.Left)
@@ -303,7 +303,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Left)
 		e.discard(n.Right)
 	case OSLICE, OSLICEARR, OSLICE3, OSLICE3ARR, OSLICESTR:
-		e.value(k.copy(n, "slice"), n.Left)
+		e.value(k.note(n, "slice"), n.Left)
 		low, high, max := n.SliceBounds()
 		e.discard(low)
 		e.discard(high)
@@ -319,7 +319,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		if !n.Left.Type.IsInterface() && !isdirectiface(n.Left.Type) {
 			k = e.spill(k, n)
 		}
-		e.value(k.copy(n, "interface-converted"), n.Left)
+		e.value(k.note(n, "interface-converted"), n.Left)
 
 	case ORECV:
 		e.discard(n.Left)
@@ -357,14 +357,14 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.assignHeap(n.Left, "call part", n)
 
 	case OPTRLIT:
-		e.value(e.spill(k, n).copy(n, "pointer literal [assign]"), n.Left)
+		e.value(e.spill(k, n).note(n, "pointer literal [assign]"), n.Left)
 
 	case OARRAYLIT:
 		for _, elt := range n.List.Slice() {
 			if elt.Op == OKEY {
 				elt = elt.Right
 			}
-			e.value(k.copy(n, "array literal element"), elt)
+			e.value(k.note(n, "array literal element"), elt)
 		}
 
 	case OSLICELIT:
@@ -376,12 +376,12 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 			if elt.Op == OKEY {
 				elt = elt.Right
 			}
-			e.value(k.copy(n, "slice-literal-element"), elt)
+			e.value(k.note(n, "slice-literal-element"), elt)
 		}
 
 	case OSTRUCTLIT:
 		for _, elt := range n.List.Slice() {
-			e.value(k.copy(n, "struct literal element"), elt.Left)
+			e.value(k.note(n, "struct literal element"), elt.Left)
 		}
 
 	case OMAPLIT:
@@ -407,7 +407,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 				k = k.addr(v, "reference")
 			}
 
-			e.value(k.copy(n, "captured by a closure"), v.Name.Defn)
+			e.value(k.note(n, "captured by a closure"), v.Name.Defn)
 		}
 
 	case ORUNES2STR, OBYTES2STR, OSTR2RUNES, OSTR2BYTES, ORUNESTR:
@@ -558,7 +558,7 @@ func (e *EscState) assign(dst, src *Node, why string, where *Node) {
 }
 
 func (e *EscState) assignHeap(src *Node, why string, where *Node) {
-	e.value(e.heapHole().copy(where, why), src)
+	e.value(e.heapHole().note(where, why), src)
 }
 
 func (e *EscState) assignHeapDeref(src *Node, why string, where *Node) {
@@ -749,13 +749,13 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscH
 	loc := e.newLoc(nil)
 
 	if esc&EscContentEscapes != 0 {
-		e.flow(e.heapHole().shift(1, nil, ""), loc)
+		e.flow(e.heapHole().shift(1), loc)
 	}
 
 	for i, k := range ks {
 		x := int(esc>>uint(EscReturnBits+i*bitsPerOutputInTag)) & int(bitsMaskForTag)
 		if x != 0 {
-			e.flow(k.shift(int(x-1), nil, ""), loc)
+			e.flow(k.shift(x-1), loc)
 		}
 	}
 
@@ -783,23 +783,21 @@ type EscHole struct {
 	derefs int
 }
 
-// TODO(mdempsky): Better name than copy? I'm worried that suggests
-// copying values, whereas this is really about just adding another
-// breadcrumb to the EscHole trail without adjusting the derefs
-// semantics.
-func (k EscHole) copy(where *Node, why string) EscHole  { return k.shift(0, where, why) }
-func (k EscHole) deref(where *Node, why string) EscHole { return k.shift(1, where, why) }
-func (k EscHole) addr(where *Node, why string) EscHole  { return k.shift(-1, where, why) }
+func (k EscHole) note(where *Node, why string) EscHole {
+	// TODO(mdempsky): Keep a record of where/why for diagnostics.
+	return k
+}
 
-func (k EscHole) shift(delta int, where *Node, why string) EscHole {
-	// k0 := k
+func (k EscHole) shift(delta int) EscHole {
 	k.derefs += delta
 	if k.derefs < -1 {
 		Fatalf("derefs underflow: %v", k.derefs)
 	}
-	// fmt.Printf("shift(%v, %v, %v): %v -> %v\n", delta, where, why, k0, k)
 	return k
 }
+
+func (k EscHole) deref(where *Node, why string) EscHole { return k.shift(1).note(where, why) }
+func (k EscHole) addr(where *Node, why string) EscHole  { return k.shift(-1).note(where, why) }
 
 func (e *EscState) dcl(n *Node) EscHole {
 	return e.spill(e.discardHole(), n)
