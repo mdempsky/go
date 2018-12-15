@@ -114,14 +114,28 @@ func (e *EscState) stmt(n *Node) {
 		e.loopdepth--
 
 	case OSWITCH:
+		var tv *EscLocation
+		if n.Left != nil {
+			if n.Left.Op == OTYPESW {
+				k := e.discardHole()
+				if n.Left.Left != nil {
+					tv = e.newLoc(n.Left.Left)
+					k = EscHole{dst: tv}
+				}
+				e.value(k, n.Left.Right)
+			} else {
+				e.discard(n.Left)
+			}
+		}
+
 		for _, cas := range n.List.Slice() { // cases
-			if n.Left != nil && n.Left.Op == OTYPESW && cas.Rlist.Len() != 0 {
+			if tv != nil {
 				// type switch variables have no ODCL.
 				cv := cas.Rlist.First()
 				k := e.dcl(cv)
 				// TODO(mdempsky): Implicit ODOTTYPE.
 				if types.Haspointers(cv.Type) {
-					e.value(k.note(n, "switch case"), n.Left.Right)
+					e.flow(k.note(n, "switch case"), tv)
 				}
 			}
 
