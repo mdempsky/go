@@ -1,3 +1,7 @@
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 package gc
 
 import (
@@ -460,6 +464,11 @@ func (e *EscState) ptrArith(k EscHole, n *Node) {
 	if n.Type.Etype != TUINTPTR {
 		Fatalf("unexpected type %v for %v", n.Type, n)
 	}
+
+	// TODO(mdempsky): Recognize
+	// reflect.Value.{Pointer,UnsafeAddr} and
+	// reflect.{Slice,String}Header.Data.
+
 	switch n.Op {
 	case OCONV, OCONVNOP:
 		if n.Left.Type.Etype == TUNSAFEPTR {
