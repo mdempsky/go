@@ -422,11 +422,17 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		// but I think e.value(k, args[0]) would be correct.
 		tee := e.newLoc(nil)
 		e.flow(k, tee)
-		e.flow(e.heapHole().deref(n, "appendee slice"), tee)
+		if types.Haspointers(args[0].Type.Elem()) {
+			e.flow(e.heapHole().deref(n, "appendee slice"), tee)
+		}
 		e.value(EscHole{dst: tee}, args[0])
 
 		if n.IsDDD() {
-			e.assignHeapDeref(args[1], "appended slice...", n)
+			k2 := e.discardHole()
+			if args[1].Type.IsSlice() && types.Haspointers(args[1].Type.Elem()) {
+				k2 = e.heapHole().deref(n, "appended slice...")
+			}
+			e.value(k2, args[1])
 		} else {
 			for _, arg := range args[1:] {
 				e.assignHeap(arg, "appended to slice", n)
