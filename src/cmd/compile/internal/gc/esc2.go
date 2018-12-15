@@ -429,7 +429,12 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	}
 }
 
+// ptrArith evaluates a uintptr-typed arithmetic expression looking
+// for conversions from an unsafe.Pointer.
 func (e *EscState) ptrArith(k EscHole, n *Node) {
+	if n.Type.Etype != TUINTPTR {
+		Fatalf("unexpected type %v for %v", n.Type, n)
+	}
 	switch n.Op {
 	case OCONV, OCONVNOP:
 		if n.Left.Type.Etype == TUNSAFEPTR {
