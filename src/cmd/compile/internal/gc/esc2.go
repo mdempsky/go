@@ -485,12 +485,7 @@ func (e *EscState) addr(n *Node) EscHole {
 		return e.discardHole()
 	}
 
-	if !types.Haspointers(n.Type) && !isReflectHeaderDataField(n) {
-		if debugLevel(2) {
-			Warnl(n.Pos, "discarding assignment to non-pointer destination %v", n)
-		}
-		return e.discardHole()
-	}
+	k := e.heapHole()
 
 	switch n.Op {
 	default:
@@ -500,18 +495,18 @@ func (e *EscState) addr(n *Node) EscHole {
 			Fatalf("bad")
 		}
 		if n.Class() == PEXTERN {
-			return e.heapHole()
+			break
 		}
 		if n.IsClosureVar() {
 			n = n.Name.Defn
 		}
-		return EscHole{dst: e.oldLoc(n)}
+		k = EscHole{dst: e.oldLoc(n)}
 	case ODOT:
-		return e.addr(n.Left)
+		k = e.addr(n.Left)
 	case OINDEX:
 		e.discard(n.Right)
 		if n.Left.Type.IsArray() {
-			return e.addr(n.Left)
+			k = e.addr(n.Left)
 		} else {
 			e.discard(n.Left)
 		}
@@ -521,7 +516,15 @@ func (e *EscState) addr(n *Node) EscHole {
 		e.discard(n.Left)
 		e.assignHeap(n.Right, "key of map put", n)
 	}
-	return e.heapHole()
+
+	if !types.Haspointers(n.Type) && !isReflectHeaderDataField(n) {
+		if debugLevel(2) && k.dst != &BlankLoc {
+			Warnl(n.Pos, "discarding assignment to non-pointer destination %v", n)
+		}
+		k = e.discardHole()
+	}
+
+	return k
 }
 
 func (e *EscState) addrs(l Nodes) []EscHole {
