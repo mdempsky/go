@@ -182,7 +182,7 @@ func (e *EscState) stmt(n *Node) {
 		e.call(nil, n)
 	case OGO, ODEFER:
 		if n.Op == ODEFER && e.loopdepth == 1 {
-			e.call(nil, n.Left)
+			e.stmt(n.Left)
 			break
 		}
 
@@ -555,7 +555,7 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 	var fn *Node
 	switch call.Op {
 	default:
-		Fatalf("esccall")
+		Fatalf("esccall: %v", call.Op)
 
 	case OCALLFUNC:
 		fn = call.Left
