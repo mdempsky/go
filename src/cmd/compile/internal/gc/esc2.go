@@ -543,12 +543,14 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 	var recvK EscHole
 	var paramKs []EscHole
 
+	// Warnl(call.Pos, "figuring out how to call %v", call)
+
 	if !indirect && fn != nil && fn.Op == ONAME && fn.Class() == PFUNC &&
 		fn.Name.Defn != nil && fn.Name.Defn.Nbody.Len() != 0 && fn.Name.Param.Ntype != nil && fn.Name.Defn.Esc < EscFuncTagged {
 
 		// function in same mutually recursive group. Incorporate into flow graph.
 		if debugLevel(2) {
-			fmt.Printf("%v::esccall:: %S in recursive group\n", linestr(lineno), call)
+			Warnl(call.Pos, "calling %v recursively", call)
 		}
 
 		if fn.Name.Defn.Esc == EscFuncUnknown {
@@ -580,8 +582,15 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		if call.Op != OCALLFUNC {
 			recvK = e.tagHole(ks, indirect, fntype.Recv())
 		} else if indirect { // indirect and OCALLFUNC = could be captured variables, too. (#14409)
-			for _, k := range ks {
-				e.value(k.deref(call, "captured by called closure"), fn)
+			if len(ks) == 0 {
+				e.value(e.discardHole(), fn)
+			} else {
+				// TODO(mdempsky): Evaluate fn into a
+				// temporary location instead and flow
+				// that to all of ks.
+				for _, k := range ks {
+					e.value(k.deref(call, "captured by called closure"), fn)
+				}
 			}
 		}
 
