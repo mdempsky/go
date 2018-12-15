@@ -24,6 +24,10 @@ import (
 //
 // Rather than just "if !x { e.value(k, n.Left) }".
 
+// TODO(mdempsky): esc.go marks reflect.Value.Pointer and
+// reflect.Value.UnsafeAddr's receiver params as esc:0x12 because it
+// flows to the result as a uintptr, but we mark it as esc:0x1 here.
+
 func (e *EscState) stmt(n *Node) {
 	if n == nil {
 		return
