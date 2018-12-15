@@ -504,6 +504,8 @@ func escAnalyze(all []*Node, recursive bool) {
 		}
 	}
 
+	e.flood(all)
+
 	// visit the upstream of each dst, mark address nodes with
 	// addrescapes, mark parameters unsafe
 	escapes := make([]uint16, len(e.dsts))
@@ -529,8 +531,6 @@ func escAnalyze(all []*Node, recursive bool) {
 			break
 		}
 	}
-
-	e.flood(all)
 
 	// for all top level functions, tag the typenodes corresponding to the param nodes
 	for _, n := range all {
