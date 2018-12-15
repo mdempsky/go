@@ -196,21 +196,18 @@ func (e *EscState) stmt(n *Node) {
 			break
 		}
 
-		hole := e.heapHole()
-		e.value(hole, n.Left.Left)
-
-		// TODO(mdempsky): Do I need to handle ... here?
+		e.assignHeap(n.Left.Left, "go/defer func", n)
 
 		args := n.Left.List.Slice()
 		if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
 			var holes []EscHole
 			for i, n := 0, args[0].Type.NumFields(); i < n; i++ {
-				holes = append(holes, hole)
+				holes = append(holes, e.heapHole())
 			}
 			e.call(holes, args[0])
 		} else {
 			for _, arg := range args {
-				e.value(hole, arg)
+				e.assignHeap(arg, "go/defer func arg", n)
 			}
 		}
 
@@ -1082,6 +1079,10 @@ func (e *EscState) cleanup() {
 			// it as EscUnknown.
 			if x := n.Right.Right; x != nil {
 				esc = x.Esc
+			} else if n.Type.Elem().NumElem() == 0 {
+				// esc.go doesn't create ODDDARG for
+				// 0-length args either.
+				esc = EscNone
 			}
 		} else if n.Op == ONAME {
 			if n.Class() == PAUTOHEAP {
