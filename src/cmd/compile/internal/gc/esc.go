@@ -495,6 +495,8 @@ func escAnalyze(all []*Node, recursive bool) {
 		}
 	}
 
+	e.setup(all)
+
 	// flow-analyze functions
 	for _, n := range all {
 		if n.Op == ODCLFUNC {
@@ -528,6 +530,8 @@ func escAnalyze(all []*Node, recursive bool) {
 		}
 	}
 
+	e.flood(all)
+
 	// for all top level functions, tag the typenodes corresponding to the param nodes
 	for _, n := range all {
 		if n.Op == ODCLFUNC {
@@ -546,6 +550,8 @@ func escAnalyze(all []*Node, recursive bool) {
 	for _, x := range e.opts {
 		x.SetOpt(nil)
 	}
+
+	e.cleanup()
 }
 
 func (e *EscState) escfunc(fn *Node) {
@@ -558,6 +564,9 @@ func (e *EscState) escfunc(fn *Node) {
 	e.loopdepth = 1
 	savefn := Curfn
 	Curfn = fn
+
+	e.stmts(fn.Nbody)
+	e.loopdepth = 1
 
 	for _, ln := range Curfn.Func.Dcl {
 		if ln.Op != ONAME {
