@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+const oldEscCompat = true
+
 // TODO(mdempsky): Document how to write and maintain code.
 //
 // In particular, it's important to always visit the entire AST. That
@@ -119,7 +121,7 @@ func (e *EscState) stmt(n *Node) {
 			if n.Left.Op == OTYPESW {
 				k := e.discardHole()
 				if n.Left.Left != nil {
-					tv = e.newLoc(n.Left.Left)
+					tv = e.newLoc(n.Left)
 					k = EscHole{dst: tv}
 				}
 				e.value(k, n.Left.Right)
@@ -158,18 +160,6 @@ func (e *EscState) stmt(n *Node) {
 		e.assignHeap(n.Right, "send", n)
 
 	case OAS, OASOP:
-		// Filter out some no-op assignments for escape analysis.
-		// TODO(mdempsky): Move into (*EscState).assign.
-		if e.isSelfAssign(n.Left, n.Right) {
-			if Debug['m'] != 0 {
-				Warnl(n.Pos, "%v ignoring self-assignment in %S", e.curfnSym(n), n)
-			}
-			return
-		}
-
-		if debugLevel(3) {
-			Dump("esc2 assignment", n)
-		}
 		e.assign(n.Left, n.Right, "assign", n)
 
 	case OAS2:
@@ -442,14 +432,14 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		// but I think e.value(k, args[0]) would be correct.
 		tee := e.newLoc(nil)
 		e.flow(k, tee)
-		if types.Haspointers(args[0].Type.Elem()) {
+		if oldEscCompat && types.Haspointers(args[0].Type.Elem()) {
 			e.flow(e.heapHole().deref(n, "appendee slice"), tee)
 		}
 		e.value(EscHole{dst: tee}, args[0])
 
 		if n.IsDDD() {
 			k2 := e.discardHole()
-			if args[1].Type.IsSlice() && types.Haspointers(args[1].Type.Elem()) {
+			if oldEscCompat && args[1].Type.IsSlice() && types.Haspointers(args[1].Type.Elem()) {
 				k2 = e.heapHole().deref(n, "appended slice...")
 			}
 			e.value(k2, args[1])
@@ -566,15 +556,23 @@ func (e *EscState) addrs(l Nodes) []EscHole {
 }
 
 func (e *EscState) assign(dst, src *Node, why string, where *Node) {
+	// Filter out some no-op assignments for escape analysis.
+	if (!oldEscCompat || why == "assign") && e.isSelfAssign(dst, src) {
+		if Debug['m'] != 0 {
+			Warnl(where.Pos, "%v ignoring self-assignment in %S", e.curfnSym(where), where)
+		}
+		return
+	}
+
+	if debugLevel(3) {
+		Dump("esc2 assignment", where)
+	}
+
 	e.value(e.addr(dst), src)
 }
 
 func (e *EscState) assignHeap(src *Node, why string, where *Node) {
 	e.value(e.heapHole().note(where, why), src)
-}
-
-func (e *EscState) assignHeapDeref(src *Node, why string, where *Node) {
-	e.value(e.heapHole().deref(where, why), src)
 }
 
 func (e *EscState) call(ks []EscHole, call *Node) {
@@ -1091,6 +1089,9 @@ func (e *EscState) cleanup() {
 			} else {
 				esc = EscNone
 			}
+		} else if n.Op == OTYPESW {
+			// Temporary location; not real.
+			continue
 		} else {
 			esc = n.Esc
 		}
