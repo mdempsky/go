@@ -565,9 +565,6 @@ func (e *EscState) escfunc(fn *Node) {
 	savefn := Curfn
 	Curfn = fn
 
-	e.stmts(fn.Nbody)
-	e.loopdepth = 1
-
 	for _, ln := range Curfn.Func.Dcl {
 		if ln.Op != ONAME {
 			continue
@@ -602,6 +599,10 @@ func (e *EscState) escfunc(fn *Node) {
 	}
 
 	e.escloopdepthlist(Curfn.Nbody)
+
+	e.stmts(fn.Nbody)
+	e.loopdepth = 1
+
 	e.esclist(Curfn.Nbody, Curfn)
 	Curfn = savefn
 	e.loopdepth = saveld

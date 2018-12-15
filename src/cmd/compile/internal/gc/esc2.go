@@ -780,7 +780,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 		if n != nil {
 			pos = n.Pos
 		}
-		Warnl(pos, "allocating location for %v (%p)", n, n)
+		Warnl(pos, "allocating location for %v (%p) at ld=%v", n, n, e.loopdepth)
 	}
 	loc := &EscLocation{
 		n:         n,
