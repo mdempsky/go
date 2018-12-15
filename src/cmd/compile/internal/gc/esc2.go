@@ -230,6 +230,13 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		lineno = lno
 	}()
 
+	if !types.Haspointers(n.Type) && k.derefs >= 0 {
+		if debugLevel(2) && k.dst != &BlankLoc {
+			Warnl(n.Pos, "discarding value of non-pointer %v", n)
+		}
+		k = e.discardHole()
+	}
+
 	// fmt.Printf("valueSkipInit: %v, %v\n", k, n)
 
 	switch n.Op {
@@ -248,15 +255,9 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		}
 		e.flow(k, e.oldLoc(n))
 
-	case OPLUS, ONEG, OBITNOT:
-		e.value(k, n.Left)
-	case OADD, OSUB, OOR, OXOR, OMUL, ODIV, OMOD, OLSH, ORSH, OAND, OANDNOT:
-		e.value(k, n.Left)
-		e.value(k, n.Right)
-
-	case ONOT:
+	case OPLUS, ONEG, OBITNOT, ONOT:
 		e.discard(n.Left)
-	case OEQ, ONE, OLT, OLE, OGT, OGE, OANDAND, OOROR:
+	case OADD, OSUB, OOR, OXOR, OMUL, ODIV, OMOD, OLSH, ORSH, OAND, OANDNOT, OEQ, ONE, OLT, OLE, OGT, OGE, OANDAND, OOROR:
 		e.discard(n.Left)
 		e.discard(n.Right)
 
@@ -288,7 +289,11 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(max)
 
 	case OCONV, OCONVNOP:
-		e.value(k, n.Left)
+		if n.Type.Etype == TUNSAFEPTR && n.Left.Type.Etype == TUINTPTR {
+			e.ptrArith(k, n.Left)
+		} else {
+			e.value(k, n.Left)
+		}
 	case OCONVIFACE:
 		if !n.Left.Type.IsInterface() && !isdirectiface(n.Left.Type) {
 			k = e.spill(k, n)
@@ -355,9 +360,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 
 	case OSTRUCTLIT:
 		for _, elt := range n.List.Slice() {
-			if types.Haspointers(elt.Left.Type) {
-				e.value(k.copy(n, "struct literal element"), elt.Left)
-			}
+			e.value(k.copy(n, "struct literal element"), elt.Left)
 		}
 
 	case OMAPLIT:
@@ -426,6 +429,24 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	}
 }
 
+func (e *EscState) ptrArith(k EscHole, n *Node) {
+	switch n.Op {
+	case OCONV, OCONVNOP:
+		if n.Left.Type.Etype == TUNSAFEPTR {
+			e.value(k, n.Left)
+		} else {
+			e.discard(n.Left)
+		}
+	case OPLUS, ONEG, OBITNOT:
+		e.ptrArith(k, n.Left)
+	case OADD, OSUB, OOR, OXOR, OMUL, ODIV, OMOD, OLSH, ORSH, OAND, OANDNOT:
+		e.ptrArith(k, n.Left)
+		e.ptrArith(k, n.Right)
+	default:
+		e.discard(n)
+	}
+}
+
 func (e *EscState) discard(n *Node) {
 	e.value(e.discardHole(), n)
 }
@@ -444,6 +465,9 @@ func (e *EscState) addr(n *Node) EscHole {
 	}
 
 	if !types.Haspointers(n.Type) && !isReflectHeaderDataField(n) {
+		if debugLevel(2) {
+			Warnl(n.Pos, "discarding assignment to non-pointer destination %v", n)
+		}
 		return e.discardHole()
 	}
 
@@ -488,10 +512,6 @@ func (e *EscState) addrs(l Nodes) []EscHole {
 }
 
 func (e *EscState) assign(dst, src *Node, why string, where *Node) {
-	if dst != nil && !types.Haspointers(dst.Type) && !isReflectHeaderDataField(dst) {
-		return
-	}
-
 	e.value(e.addr(dst), src)
 }
 
