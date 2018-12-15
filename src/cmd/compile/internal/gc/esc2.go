@@ -399,7 +399,6 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 				k = k.addr(v, "reference")
 			}
 
-			// TODO(mdempsky): Sloppy typing.
 			e.value(k.copy(n, "captured by a closure"), v.Name.Defn)
 		}
 
@@ -587,6 +586,10 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 	var recvK EscHole
 	var paramKs []EscHole
 
+	if debugLevel(2) {
+		Dump("call", call)
+	}
+
 	// Warnl(call.Pos, "figuring out how to call %v", call)
 
 	if !indirect && fn != nil && fn.Op == ONAME && fn.Class() == PFUNC &&
@@ -632,6 +635,8 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 				// TODO(mdempsky): Evaluate fn into a
 				// temporary location instead and flow
 				// that to all of ks.
+				//
+				// Also, explain the 2.
 				for _, k := range ks {
 					e.value(k.deref(call, "captured by called closure"), fn)
 				}
@@ -656,12 +661,10 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		}
 		nva -= vi
 
-		ddd := nod(ODDDARG, nil, nil)
+		ddd := nod(ODDDARG, nil, call)
 		ddd.Pos = call.Pos
 		ddd.Type = types.NewPtr(types.NewArray(fntype.Params().Field(vi).Type.Elem(), int64(nva)))
-		call.Right = ddd
-		// TODO(mdempsky): Better rationalize this deref.
-		dddK := e.spill(paramKs[vi].deref(call, "ddd hack"), ddd)
+		dddK := e.spill(paramKs[vi], ddd)
 
 		paramKs = paramKs[:vi]
 		for i := 0; i < nva; i++ {
@@ -669,7 +672,8 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		}
 	}
 
-	// TODO(mdempsky): Handle implicit conversions?
+	// TODO(mdempsky): Handle implicit conversions for f(g())?
+	// esc.go doesn't, and so they'll all spill anyway.
 
 	if len(paramKs) > 1 && call.List.Len() == 1 {
 		e.call(paramKs, call.List.First())
@@ -878,6 +882,9 @@ func (l *EscLocation) String() string {
 }
 
 func (e *EscState) flow(k EscHole, src_ *EscLocation) {
+	// TODO(mdempsky): More optimizations. E.g., src == dst &&
+	// k.derefs >= 0 can be ignored.
+
 	var pos src.XPos
 	if src_.n != nil {
 		pos = src_.n.Pos
@@ -937,6 +944,12 @@ func (e *EscState) setup(all []*Node) {
 					if fn.Nbody.Len() == 0 && !fn.Noescape() {
 						loc.paramEsc = EscHeap
 					}
+				}
+
+				// For compatilibity with esc.go.
+				// TODO(mdempsky): Remove.
+				if e.recursive && dcl.Class() == PPARAMOUT {
+					e.flow(e.heapHole(), loc)
 				}
 			}
 		}
@@ -1032,6 +1045,9 @@ func debugLevel(x int) bool {
 
 func (e *EscState) cleanup() {
 	for n, loc := range escLocs {
+		if n.Op == ODDDARG && n.Right.Right != nil {
+			n = n.Right.Right // get esc.go's ODDDARG
+		}
 		escaped := n.Op != ONAME && n.Esc == EscHeap || n.Op == ONAME && n.Class() == PAUTOHEAP
 		if escaped != loc.escapes {
 			Warnl(n.Pos, "noooo: %v is 0x%x, but %v", n, n.Esc, loc.escapes)
@@ -1049,6 +1065,15 @@ func (e *EscState) cleanup() {
 				// esc.go leaves EscReturn sometimes
 				// when it doesn't matter.
 				want = EscNone | EscContentEscapes
+			}
+
+			// TODO(mdempsky): It seems like I'm not
+			// handling escaped parameters
+			// correctly. Figure this out, and in the mean
+			// time, since 0 is nonsense, just use EscHeap
+			// conservatively.
+			if want == 0 {
+				want = EscHeap
 			}
 
 			loc.paramEsc = finalizeEsc(loc.paramEsc)
