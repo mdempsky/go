@@ -11,6 +11,19 @@ import (
 
 // TODO(mdempsky): Handle conversions and untyped values better.
 
+// TODO(mdempsky): Document how to write and maintain code.
+//
+// In particular, it's important to always visit the entire AST. That
+// is, you have to write something like:
+//
+//    if x {
+//        e.discard(n.Left)
+//    } else {
+//        e.value(k, n.Left)
+//    }
+//
+// Rather than just "if !x { e.value(k, n.Left) }".
+
 func (e *EscState) stmt(n *Node) {
 	if n == nil {
 		return
