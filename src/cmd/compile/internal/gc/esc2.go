@@ -831,17 +831,6 @@ func (e *EscState) dcl(n *Node) EscHole {
 }
 
 func (e *EscState) spill(k EscHole, n *Node) EscHole {
-	// TODO(mdempsky): Cleanup. Maybe move to newLoc?
-	if /*n.Esc != EscHeap &&*/ n.Type != nil &&
-		(n.Type.Width > maxStackVarSize ||
-			(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
-			n.Op == OMAKESLICE && !isSmallMakeSlice(n)) {
-		if debugLevel(2) {
-			Warnl(n.Pos, "spilling %v directly to the heap", n)
-		}
-		k = e.heapHole()
-	}
-
 	loc := e.newLoc(n)
 	e.flow(k.addr(n, "spill"), loc)
 	return EscHole{dst: loc}
@@ -895,6 +884,16 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 	allocLocs++
 	if n != nil {
 		escLocs[n] = loc
+
+		if /*n.Esc != EscHeap &&*/ n.Type != nil &&
+			(n.Type.Width > maxStackVarSize ||
+				(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
+				n.Op == OMAKESLICE && !isSmallMakeSlice(n)) {
+			if debugLevel(2) {
+				Warnl(n.Pos, "spilling %v directly to the heap", n)
+			}
+			e.flow(e.heapHole().addr(nil, ""), loc)
+		}
 	}
 	return loc
 }
