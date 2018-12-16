@@ -662,19 +662,9 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		// If there is a receiver, it also leaks to heap.
 		if call.Op != OCALLFUNC {
 			recvK = e.tagHole(ks, indirect, fntype.Recv())
-		} else if indirect { // indirect and OCALLFUNC = could be captured variables, too. (#14409)
-			if len(ks) == 0 {
-				e.value(e.discardHole(), fn)
-			} else {
-				// TODO(mdempsky): Evaluate fn into a
-				// temporary location instead and flow
-				// that to all of ks.
-				//
-				// Also, explain the 2.
-				for _, k := range ks {
-					e.value(k.deref(call, "captured by called closure"), fn)
-				}
-			}
+		} else if indirect {
+			// indirect and OCALLFUNC = could be captured variables, too. (#14409)
+			e.value(e.teeHole(ks).note(call, "captured by called closure"), fn)
 		}
 
 		for _, param := range fntype.Params().FieldSlice() {
@@ -722,6 +712,18 @@ func (e *EscState) paramHole(param *types.Field) EscHole {
 		return e.discardHole()
 	}
 	return EscHole{dst: e.oldLoc(asNode(param.Nname))}
+}
+
+func (e *EscState) teeHole(ks []EscHole) EscHole {
+	if len(ks) == 0 {
+		return e.discardHole()
+	}
+
+	loc := e.newLoc(nil)
+	for _, k := range ks {
+		e.flow(k, loc)
+	}
+	return EscHole{dst: loc}
 }
 
 func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscHole {
@@ -815,7 +817,9 @@ func (k EscHole) deref(where *Node, why string) EscHole { return k.shift(1).note
 func (k EscHole) addr(where *Node, why string) EscHole  { return k.shift(-1).note(where, why) }
 
 func (e *EscState) dcl(n *Node) EscHole {
-	return e.spill(e.discardHole(), n)
+	loc := e.oldLoc(n)
+	loc.loopDepth = int(e.loopdepth)
+	return EscHole{dst: loc}
 }
 
 func (e *EscState) spill(k EscHole, n *Node) EscHole {
