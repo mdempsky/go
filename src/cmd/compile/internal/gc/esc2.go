@@ -885,6 +885,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 	if n != nil {
 		escLocs[n] = loc
 
+		// TODO(mdempsky): Perhaps set n.Esc and then just return &HeapLoc?
 		if /*n.Esc != EscHeap &&*/ n.Type != nil &&
 			(n.Type.Width > maxStackVarSize ||
 				(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
