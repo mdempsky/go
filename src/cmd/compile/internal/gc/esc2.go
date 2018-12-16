@@ -432,15 +432,10 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		// TODO(mdempsky): might be append(f())
 		args := n.List.Slice()
 
-		// TODO(mdempsky): This matches esc.go's semantics
-		// (leaking the appendee slice's contents to heap),
-		// but I think e.value(k, args[0]) would be correct.
-		tee := e.newLoc(nil)
-		e.flow(k, tee)
 		if oldEscCompat && types.Haspointers(args[0].Type.Elem()) {
-			e.flow(e.heapHole().deref(n, "appendee slice"), tee)
+			k = e.teeHole(k, e.heapHole().deref(n, "appendee slice"))
 		}
-		e.value(EscHole{dst: tee}, args[0])
+		e.value(k, args[0])
 
 		if n.IsDDD() {
 			k2 := e.discardHole()
@@ -664,16 +659,12 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 			recvK = e.tagHole(ks, indirect, fntype.Recv())
 		} else if indirect {
 			// indirect and OCALLFUNC = could be captured variables, too. (#14409)
-			e.value(e.teeHole(ks).note(call, "captured by called closure"), fn)
+			e.value(e.teeHole(ks...).deref(call, "captured by called closure"), fn)
 		}
 
 		for _, param := range fntype.Params().FieldSlice() {
 			paramKs = append(paramKs, e.tagHole(ks, indirect, param))
 		}
-	}
-
-	if call.Op != OCALLFUNC {
-		e.value(recvK, call.Left.Left)
 	}
 
 	if fntype.IsVariadic() && !call.IsDDD() {
@@ -698,10 +689,27 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 
 	// TODO(mdempsky): Handle implicit conversions.
 
+	if call.Op != OCALLFUNC {
+		e.value(recvK, call.Left.Left)
+	}
+
 	if len(paramKs) > 1 && call.List.Len() == 1 {
 		e.call(paramKs, call.List.First())
 	} else {
 		for i, arg := range call.List.Slice() {
+			// For arguments to go:uintptrescapes, peel
+			// away an unsafe.Pointer->uintptr conversion,
+			// if present.
+			if !indirect && arg.Op == OCONVNOP && arg.Type.Etype == TUINTPTR && arg.Left.Type.Etype == TUNSAFEPTR {
+				x := i
+				if fntype.IsVariadic() && x >= fntype.NumParams() {
+					x = fntype.NumParams() - 1
+				}
+				if fntype.Params().Field(x).Note == uintptrEscapesTag {
+					arg = arg.Left
+				}
+			}
+
 			e.value(paramKs[i], arg)
 		}
 	}
@@ -714,7 +722,7 @@ func (e *EscState) paramHole(param *types.Field) EscHole {
 	return EscHole{dst: e.oldLoc(asNode(param.Nname))}
 }
 
-func (e *EscState) teeHole(ks []EscHole) EscHole {
+func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	if len(ks) == 0 {
 		return e.discardHole()
 	}
