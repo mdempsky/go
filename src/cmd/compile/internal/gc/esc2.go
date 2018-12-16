@@ -1116,7 +1116,7 @@ func (e *EscState) cleanup() {
 			if x := n.Right; x != nil {
 				esc = x.Esc
 			} else if loc.paramEsc == 42 {
-				esc = EscNone
+				continue
 			}
 		case ONAME:
 			if n.Class() == PAUTOHEAP {
