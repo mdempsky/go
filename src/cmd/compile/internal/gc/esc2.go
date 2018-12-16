@@ -657,9 +657,6 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		// If there is a receiver, it also leaks to heap.
 		if call.Op != OCALLFUNC {
 			recvK = e.tagHole(ks, indirect, fntype.Recv())
-		} else if indirect {
-			// indirect and OCALLFUNC = could be captured variables, too. (#14409)
-			e.value(e.teeHole(ks...).deref(call, "captured by called closure"), fn)
 		}
 
 		for _, param := range fntype.Params().FieldSlice() {
@@ -691,6 +688,9 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 
 	if call.Op != OCALLFUNC {
 		e.value(recvK, call.Left.Left)
+	} else if indirect {
+		// indirect and OCALLFUNC = could be captured variables, too. (#14409)
+		e.value(e.teeHole(ks...).deref(call, "captured by called closure"), fn)
 	}
 
 	if len(paramKs) > 1 && call.List.Len() == 1 {
@@ -725,6 +725,9 @@ func (e *EscState) paramHole(param *types.Field) EscHole {
 func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	if len(ks) == 0 {
 		return e.discardHole()
+	}
+	if len(ks) == 1 {
+		return ks[0]
 	}
 
 	loc := e.newLoc(nil)
