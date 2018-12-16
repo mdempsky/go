@@ -779,6 +779,7 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscH
 type EscLocation struct {
 	n         *Node
 	edges     []EscEdge
+	curfn     *Node
 	loopDepth int
 
 	distance int
@@ -855,6 +856,10 @@ func normalize(n *Node) *Node {
 }
 
 func (e *EscState) newLoc(n *Node) *EscLocation {
+	if Curfn == nil {
+		Fatalf("Curfn isn't set")
+	}
+
 	n = normalize(n)
 
 	// TODO(mdempsky): Validate n.Op?
@@ -872,6 +877,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 	}
 	loc := &EscLocation{
 		n:         n,
+		curfn:     Curfn,
 		loopDepth: int(e.loopdepth),
 	}
 	allocLocs++
@@ -930,15 +936,8 @@ func (e *EscState) flow(k EscHole, src_ *EscLocation) {
 		return
 	}
 
-	if k.derefs < 0 && dst.loopDepth < src_.loopDepth {
-		if debugLevel(2) {
-			Warnl(pos, "esc2: %v (%d) <~ %v (%d), derefs=%v (linked to heap)", dst, dst.loopDepth, src_, src_.loopDepth, k.derefs)
-		}
-		dst = &HeapLoc
-	} else {
-		if debugLevel(2) {
-			Warnl(pos, "esc2: %v <~ %v, derefs=%v (emad)", dst, src_, k.derefs)
-		}
+	if debugLevel(2) {
+		Warnl(pos, "esc2: %v <~ %v, derefs=%v", dst, src_, k.derefs)
 	}
 
 	// TODO(mdempsky): Deduplicate edges?
@@ -971,8 +970,9 @@ var escLocs = map[*Node]*EscLocation{}
 func (e *EscState) setup(all []*Node) {
 	e.loopdepth = 1
 	for _, fn := range all {
+		Curfn = fn
 		for _, dcl := range fn.Func.Dcl {
-			if dcl.Op == ONAME && (dcl.Class() == PPARAM || dcl.Class() == PPARAMOUT) {
+			if dcl.Op == ONAME {
 				loc := e.newLoc(dcl)
 				if dcl.Class() == PPARAM {
 					if fn.Nbody.Len() == 0 && !fn.Noescape() {
@@ -988,20 +988,26 @@ func (e *EscState) setup(all []*Node) {
 			}
 		}
 	}
+	Curfn = nil
 }
 
 func (e *EscState) flood(all []*Node) {
 	for _, fn := range all {
+		Curfn = fn
 		if fn.Op != ODCLFUNC {
 			Warnl(fn.Pos, "what is it? %v", fn)
 			continue
 		}
 		for _, dcl := range fn.Func.Dcl {
-			if dcl.Op == ONAME && dcl.Class() == PPARAMOUT {
+			// TODO(mdempsky): Sometimes this discovers
+			// new ONAMEs that weren't in setup. Probably
+			// from movetoheap?
+			if dcl.Op == ONAME {
 				e.walk(e.oldLoc(dcl))
 			}
 		}
 	}
+	Curfn = nil
 
 	e.walk(&HeapLoc)
 }
@@ -1023,18 +1029,25 @@ func (e *EscState) walk(root *EscLocation) {
 			Warnl(src.NoXPos, "esc2: visiting %v (%p) at distance %v from root %v; %v edges", p, p, base, root, len(p.edges))
 		}
 		if base < 0 {
-			base = 0
-			if !p.escapes && debugLevel(1) {
-				var pos src.XPos
-				if p.n != nil {
-					pos = p.n.Pos
+			// The reasons this can leak: the address is leaking to:
+			// 1. the heap;
+			// 2. a return parameter;
+			// 3. a variable (within the same function) outside the allocating node's loop depth; or
+			// 4. a variable in an outer function.
+			if root == &HeapLoc || (root.n != nil && root.n.Op == ONAME && root.n.Class() == PPARAMOUT) || (root.curfn == p.curfn && root.loopDepth < p.loopDepth) || strings.HasPrefix(p.curfn.Func.Nname.Sym.Name, root.curfn.Func.Nname.Sym.Name+".") {
+				if !p.escapes && debugLevel(1) {
+					var pos src.XPos
+					if p.n != nil {
+						pos = p.n.Pos
+					}
+					Warnl(pos, "esc2: found a path from %v to %v that escapes", root, p)
 				}
-				Warnl(pos, "esc2: found a path from %v to %v that escapes", root, p)
+				p.escapes = true
+				if root != &HeapLoc {
+					e.flow(EscHole{dst: &HeapLoc}, p)
+				}
 			}
-			p.escapes = true
-			if root != &HeapLoc {
-				e.flow(EscHole{dst: &HeapLoc}, p)
-			}
+			base = 0
 		}
 		if p.n != nil && p.n.Op == ONAME && p.n.Class() == PPARAM && p.paramEsc != EscHeap {
 			if root == &HeapLoc {
