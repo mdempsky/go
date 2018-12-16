@@ -1043,13 +1043,13 @@ func (e *EscState) walk(root *EscLocation) {
 		if debugLevel(1) {
 			Warnl(src.NoXPos, "esc2: visiting %v (%p) at distance %v from root %v; %v edges", p, p, base, root, len(p.edges))
 		}
+
 		if base < 0 {
-			// The reasons this can leak: the address is leaking to:
-			// 1. the heap;
-			// 2. a return parameter;
-			// 3. a variable (within the same function) outside the allocating node's loop depth; or
-			// 4. a variable in an outer function.
-			if root == &HeapLoc || root.isName(PPARAMOUT) || (root.curfn == p.curfn && root.loopDepth < p.loopDepth) || strings.HasPrefix(p.curfn.Func.Nname.Sym.Name, root.curfn.Func.Nname.Sym.Name+".") {
+			base = 0
+
+			// p's address flows to root. If root outlives
+			// p, then p needs to be heap allocated.
+			if root.outlives(p) {
 				if !p.escapes && debugLevel(1) {
 					var pos src.XPos
 					if p.n != nil {
@@ -1058,32 +1058,24 @@ func (e *EscState) walk(root *EscLocation) {
 					Warnl(pos, "esc2: found a path from %v to %v that escapes", root, p)
 				}
 				p.escapes = true
+
+				// TODO(mdempsky): This is clumsy.
 				if root != &HeapLoc {
 					e.flow(EscHole{dst: &HeapLoc}, p)
 				}
 			}
-			base = 0
 		}
-		if p.isName(PPARAM) && p.paramEsc != EscHeap {
-			if root == &HeapLoc {
-				if base > 0 {
-					p.paramEsc |= EscContentEscapes
-				} else {
-					p.paramEsc = EscHeap
-				}
-			} else if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
-				x := 1 + uint16(base)
-				if base > maxEncodedLevel {
-					x = 1 + uint16(maxEncodedLevel)
-				}
 
-				shift := uint(EscReturnBits + (root.n.Name.Vargen-1)*bitsPerOutputInTag)
-				if (x<<shift)>>shift != x {
-					// Encoding spill.
-					p.paramEsc = EscHeap
-				} else if old := (p.paramEsc >> shift) & bitsMaskForTag; old == 0 || x < old {
-					p.paramEsc = (p.paramEsc &^ (bitsMaskForTag << shift)) | (x << shift)
-				}
+		// p's value flows to root. If p is a function
+		// parameter and root is the heap or a corresponding
+		// result parameter, then record that value flow for
+		// tagging the function later.
+		if p.isName(PPARAM) {
+			if root == &HeapLoc {
+				p.leak(-1, base)
+			} else if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
+				// TODO(mdempsky): Eliminate dependency on Vargen here.
+				p.leak(int(root.n.Name.Vargen)-1, base)
 			}
 		}
 
@@ -1103,6 +1095,81 @@ func (e *EscState) walk(root *EscLocation) {
 
 func (l *EscLocation) isName(c Class) bool {
 	return l.n != nil && l.n.Op == ONAME && l.n.Class() == c
+}
+
+// outlives reports whether l's lifetime exceeds beyond other's.
+func (l *EscLocation) outlives(other *EscLocation) bool {
+	// The heap outlives everything.
+	if l == &HeapLoc {
+		return true
+	}
+
+	// Result parameters flow to the heap, so in effect they
+	// outlive any other location.
+	// TODO(mdempsky): Maybe cleaner to just model these flows explicitly.
+	if l.isName(PPARAMOUT) {
+		return true
+	}
+
+	// If l and other are within the same function, then l
+	// outlives other if it was declared outside other's loop
+	// scope. For example:
+	//
+	//    var l int
+	//    for {
+	//        var other int
+	//    }
+	if l.curfn == other.curfn && l.loopDepth < other.loopDepth {
+		return true
+
+	}
+
+	// If other is declared within a child closure of where l is
+	// declared, then l outlives it. For example:
+	//
+	//    var l int
+	//    func() {
+	//        var other int
+	//    }
+	if strings.HasPrefix(other.curfn.Func.Nname.Sym.Name, l.curfn.Func.Nname.Sym.Name+".") {
+		return true
+	}
+
+	return false
+}
+
+func (l *EscLocation) leak(ri, derefs int) {
+	if l.paramEsc == EscHeap {
+		return
+	}
+
+	const numResults = (16 - EscReturnBits) / bitsPerOutputInTag
+	if ri >= numResults {
+		ri = -1
+	}
+
+	if ri == -1 {
+		if derefs > 0 {
+			l.paramEsc |= EscContentEscapes
+		} else {
+			l.paramEsc = EscHeap
+		}
+		return
+	}
+
+	x := 1 + uint16(derefs)
+	if derefs > maxEncodedLevel {
+		x = 1 + uint16(maxEncodedLevel)
+	}
+
+	shift := uint(EscReturnBits + ri*bitsPerOutputInTag)
+	if (x<<shift)>>shift != x {
+		Fatalf("encoding error")
+	}
+
+	if old := (l.paramEsc >> shift) & bitsMaskForTag; old == 0 || x < old {
+		l.paramEsc = (l.paramEsc &^ (bitsMaskForTag << shift)) | (x << shift)
+	}
 }
 
 func debugLevel(x int) bool {
