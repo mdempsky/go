@@ -13,6 +13,9 @@ import (
 	"strings"
 )
 
+// If oldEscCompat is true, we try to be more compatible with esc.go's
+// quirks.
+// TODO(mdempsky): Remove.
 const oldEscCompat = true
 
 // TODO(mdempsky): Document how to write and maintain code.
@@ -557,7 +560,7 @@ func (e *EscState) addrs(l Nodes) []EscHole {
 
 func (e *EscState) assign(dst, src *Node, why string, where *Node) {
 	// Filter out some no-op assignments for escape analysis.
-	if (!oldEscCompat || why == "assign") && e.isSelfAssign(dst, src) {
+	if (!oldEscCompat || why == "assign") && dst != nil && src != nil && e.isSelfAssign(dst, src) {
 		if Debug['m'] != 0 {
 			Warnl(where.Pos, "%v ignoring self-assignment in %S", e.curfnSym(where), where)
 		}
@@ -989,15 +992,11 @@ func (e *EscState) setup(all []*Node) {
 		for _, dcl := range fn.Func.Dcl {
 			if dcl.Op == ONAME {
 				loc := e.newLoc(dcl)
-				if dcl.Class() == PPARAM {
-					if fn.Nbody.Len() == 0 && !fn.Noescape() {
-						loc.paramEsc = EscHeap
-					}
+				if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
+					loc.paramEsc = EscHeap
 				}
 
-				// For compatilibity with esc.go.
-				// TODO(mdempsky): Remove.
-				if e.recursive && dcl.Class() == PPARAMOUT {
+				if oldEscCompat && e.recursive && dcl.Class() == PPARAMOUT {
 					e.flow(e.heapHole(), loc)
 				}
 			}
@@ -1097,7 +1096,8 @@ func (l *EscLocation) isName(c Class) bool {
 	return l.n != nil && l.n.Op == ONAME && l.n.Class() == c
 }
 
-// outlives reports whether l's lifetime exceeds beyond other's.
+// outlives reports whether values stored in l may survive beyond
+// other's lifetime if stack allocated.
 func (l *EscLocation) outlives(other *EscLocation) bool {
 	// The heap outlives everything.
 	if l == &HeapLoc {
@@ -1105,9 +1105,14 @@ func (l *EscLocation) outlives(other *EscLocation) bool {
 	}
 
 	// Result parameters flow to the heap, so in effect they
-	// outlive any other location.
-	// TODO(mdempsky): Maybe cleaner to just model these flows explicitly.
-	if l.isName(PPARAMOUT) {
+	// outlive any other location. Exception: Result parameters
+	// from directly called function literals flow only to the
+	// call site.
+	//
+	// TODO(mdempsky): Cleanup explanation and double check this
+	// is actually working.
+	clo := l.curfn.Func.Closure
+	if l.isName(PPARAMOUT) && (oldEscCompat || clo == nil || clo.Func.Top&ctxCallee == 0) {
 		return true
 	}
 
@@ -1115,9 +1120,9 @@ func (l *EscLocation) outlives(other *EscLocation) bool {
 	// outlives other if it was declared outside other's loop
 	// scope. For example:
 	//
-	//    var l int
+	//    var l *int
 	//    for {
-	//        var other int
+	//        l = new(int)
 	//    }
 	if l.curfn == other.curfn && l.loopDepth < other.loopDepth {
 		return true
@@ -1127,9 +1132,9 @@ func (l *EscLocation) outlives(other *EscLocation) bool {
 	// If other is declared within a child closure of where l is
 	// declared, then l outlives it. For example:
 	//
-	//    var l int
+	//    var l *int
 	//    func() {
-	//        var other int
+	//        l = new(int)
 	//    }
 	if strings.HasPrefix(other.curfn.Func.Nname.Sym.Name, l.curfn.Func.Nname.Sym.Name+".") {
 		return true
