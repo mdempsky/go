@@ -673,14 +673,14 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		}
 		nva -= vi
 
-		ddd := nod(ODDDARG, nil, call)
-		ddd.Pos = call.Pos
-		ddd.Type = types.NewPtr(types.NewArray(fntype.Params().Field(vi).Type.Elem(), int64(nva)))
-		dddK := e.spill(paramKs[vi], ddd)
-
+		dddK := e.spill(paramKs[vi], call)
 		paramKs = paramKs[:vi]
 		for i := 0; i < nva; i++ {
 			paramKs = append(paramKs, dddK)
+		}
+
+		if nva == 0 {
+			dddK.dst.paramEsc = 42
 		}
 	}
 
@@ -1108,27 +1108,26 @@ func debugLevel(x int) bool {
 func (e *EscState) cleanup() {
 	for n, loc := range escLocs {
 		var esc uint16 = EscUnknown
-		if n.Op == ODDDARG {
+		switch n.Op {
+		case OCALLFUNC, OCALLMETH, OCALLINTER:
 			// esc.go doesn't create ODDDARG for all
 			// calls. If it's missing, then walk.go treats
 			// it as EscUnknown.
-			if x := n.Right.Right; x != nil {
+			if x := n.Right; x != nil {
 				esc = x.Esc
-			} else if n.Type.Elem().NumElem() == 0 {
-				// esc.go doesn't create ODDDARG for
-				// 0-length args either.
+			} else if loc.paramEsc == 42 {
 				esc = EscNone
 			}
-		} else if n.Op == ONAME {
+		case ONAME:
 			if n.Class() == PAUTOHEAP {
 				esc = EscHeap
 			} else {
 				esc = EscNone
 			}
-		} else if n.Op == OTYPESW {
+		case OTYPESW:
 			// Temporary location; not real.
 			continue
-		} else {
+		default:
 			esc = n.Esc
 		}
 		escaped := esc != EscNone
