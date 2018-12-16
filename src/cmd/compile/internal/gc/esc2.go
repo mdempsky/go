@@ -135,8 +135,11 @@ func (e *EscState) stmt(n *Node) {
 				// type switch variables have no ODCL.
 				cv := cas.Rlist.First()
 				k := e.dcl(cv)
-				// TODO(mdempsky): Implicit ODOTTYPE.
 				if types.Haspointers(cv.Type) {
+					// Implicit ODOTTYPE.
+					if !cv.Type.IsInterface() && !isdirectiface(cv.Type) {
+						k = k.shift(1)
+					}
 					e.flow(k.note(n, "switch case"), tv)
 				}
 			}
@@ -182,6 +185,7 @@ func (e *EscState) stmt(n *Node) {
 	case ORETURN:
 		ks := e.resultHoles()
 		if len(ks) > 1 && n.List.Len() == 1 {
+			// TODO(mdempsky): Handle implicit conversions.
 			e.call(ks, n.List.First())
 		} else {
 			for i, v := range n.List.Slice() {
@@ -285,11 +289,15 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.value(k.addr(n, "address-of"), n.Left) // "address-of"
 	case ODEREF:
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
-	case ODOT, ODOTTYPE, ODOTTYPE2, ODOTMETH, ODOTINTER:
-		// TODO(mdempsky): deref for !isdirectiface types.
+	case ODOT, ODOTMETH, ODOTINTER:
 		e.value(k.note(n, "dot"), n.Left)
 	case ODOTPTR:
 		e.value(k.deref(n, "dot of pointer"), n.Left) // "dot of pointer"
+	case ODOTTYPE, ODOTTYPE2:
+		if !n.Type.IsInterface() && !isdirectiface(n.Type) {
+			k = k.shift(1)
+		}
+		e.value(k.note(n, "dot"), n.Left)
 	case OINDEX:
 		if n.Left.Type.IsArray() {
 			e.value(k.note(n, "fixed-array-index-of"), n.Left)
@@ -698,8 +706,7 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		}
 	}
 
-	// TODO(mdempsky): Handle implicit conversions for f(g())?
-	// esc.go doesn't, and so they'll all spill anyway.
+	// TODO(mdempsky): Handle implicit conversions.
 
 	if len(paramKs) > 1 && call.List.Len() == 1 {
 		e.call(paramKs, call.List.First())
