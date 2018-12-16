@@ -1049,7 +1049,7 @@ func (e *EscState) walk(root *EscLocation) {
 			// 2. a return parameter;
 			// 3. a variable (within the same function) outside the allocating node's loop depth; or
 			// 4. a variable in an outer function.
-			if root == &HeapLoc || (root.n != nil && root.n.Op == ONAME && root.n.Class() == PPARAMOUT) || (root.curfn == p.curfn && root.loopDepth < p.loopDepth) || strings.HasPrefix(p.curfn.Func.Nname.Sym.Name, root.curfn.Func.Nname.Sym.Name+".") {
+			if root == &HeapLoc || root.isName(PPARAMOUT) || (root.curfn == p.curfn && root.loopDepth < p.loopDepth) || strings.HasPrefix(p.curfn.Func.Nname.Sym.Name, root.curfn.Func.Nname.Sym.Name+".") {
 				if !p.escapes && debugLevel(1) {
 					var pos src.XPos
 					if p.n != nil {
@@ -1064,14 +1064,14 @@ func (e *EscState) walk(root *EscLocation) {
 			}
 			base = 0
 		}
-		if p.n != nil && p.n.Op == ONAME && p.n.Class() == PPARAM && p.paramEsc != EscHeap {
+		if p.isName(PPARAM) && p.paramEsc != EscHeap {
 			if root == &HeapLoc {
 				if base > 0 {
 					p.paramEsc |= EscContentEscapes
 				} else {
 					p.paramEsc = EscHeap
 				}
-			} else if root.n != nil && root.n.Op == ONAME && root.n.Class() == PPARAMOUT && root.n.Name.Curfn == p.n.Name.Curfn {
+			} else if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
 				x := 1 + uint16(base)
 				if base > maxEncodedLevel {
 					x = 1 + uint16(maxEncodedLevel)
@@ -1099,6 +1099,10 @@ func (e *EscState) walk(root *EscLocation) {
 			}
 		}
 	}
+}
+
+func (l *EscLocation) isName(c Class) bool {
+	return l.n != nil && l.n.Op == ONAME && l.n.Class() == c
 }
 
 func debugLevel(x int) bool {
