@@ -321,7 +321,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 
 	case OCONV, OCONVNOP:
 		if n.Type.Etype == TUNSAFEPTR && n.Left.Type.Etype == TUINTPTR {
-			e.ptrArith(k, n.Left)
+			e.unsafeValue(k, n.Left)
 		} else {
 			e.value(k, n.Left)
 		}
@@ -463,9 +463,9 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	}
 }
 
-// ptrArith evaluates a uintptr-typed arithmetic expression looking
+// unsafeValue evaluates a uintptr-typed arithmetic expression looking
 // for conversions from an unsafe.Pointer.
-func (e *EscState) ptrArith(k EscHole, n *Node) {
+func (e *EscState) unsafeValue(k EscHole, n *Node) {
 	if n.Type.Etype != TUINTPTR {
 		Fatalf("unexpected type %v for %v", n.Type, n)
 	}
@@ -482,10 +482,10 @@ func (e *EscState) ptrArith(k EscHole, n *Node) {
 			e.discard(n.Left)
 		}
 	case OPLUS, ONEG, OBITNOT:
-		e.ptrArith(k, n.Left)
+		e.unsafeValue(k, n.Left)
 	case OADD, OSUB, OOR, OXOR, OMUL, ODIV, OMOD, OLSH, ORSH, OAND, OANDNOT:
-		e.ptrArith(k, n.Left)
-		e.ptrArith(k, n.Right)
+		e.unsafeValue(k, n.Left)
+		e.unsafeValue(k, n.Right)
 	default:
 		e.discard(n)
 	}
