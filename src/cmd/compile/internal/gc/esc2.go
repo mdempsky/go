@@ -203,6 +203,12 @@ func (e *EscState) stmt(n *Node) {
 			break
 		}
 
+		switch n.Left.Op {
+		case OCALLFUNC, OCALLMETH, OCALLINTER:
+		default:
+			Fatalf("TODO: %v", n)
+		}
+
 		e.assignHeap(n.Left.Left, "go/defer func", n)
 
 		args := n.Left.List.Slice()
@@ -226,6 +232,7 @@ func (e *EscState) stmt(n *Node) {
 	case OPANIC:
 		e.assignHeap(n.Left, "panic", n)
 	case ODELETE, OPRINT, OPRINTN:
+		// TODO(mdempsky): Handle f(g()).
 		e.discards(n.List)
 
 	case OCOPY, ORECOVER, ORECV:
@@ -584,6 +591,8 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 	if ks != nil && len(ks) != call.Left.Type.NumResults() {
 		Warnl(call.Pos, "expect %v values, but %v has %v results", len(ks), call.Left, call.Left.Type.NumResults())
 	}
+
+	// TODO(mdempsky): Should this handle builtin calls too?
 
 	var indirect bool
 	var fn *Node
