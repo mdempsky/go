@@ -560,18 +560,20 @@ func (e *EscState) addrs(l Nodes) []EscHole {
 
 func (e *EscState) assign(dst, src *Node, why string, where *Node) {
 	// Filter out some no-op assignments for escape analysis.
-	if (!oldEscCompat || why == "assign") && dst != nil && src != nil && e.isSelfAssign(dst, src) {
-		if Debug['m'] != 0 {
-			Warnl(where.Pos, "%v ignoring self-assignment in %S", e.curfnSym(where), where)
-		}
-		return
+	ignore := (!oldEscCompat || why == "assign") && dst != nil && src != nil && e.isSelfAssign(dst, src)
+	if ignore && Debug['m'] != 0 {
+		Warnl(where.Pos, "%v ignoring self-assignment in %S", e.curfnSym(where), where)
 	}
 
 	if debugLevel(3) {
 		Dump("esc2 assignment", where)
 	}
 
-	e.value(e.addr(dst), src)
+	k := e.addr(dst)
+	if ignore {
+		k = e.discardHole()
+	}
+	e.value(k, src)
 }
 
 func (e *EscState) assignHeap(src *Node, why string, where *Node) {
@@ -626,6 +628,8 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 
 	if !indirect && fn != nil && fn.Op == ONAME && fn.Class() == PFUNC &&
 		fn.Name.Defn != nil && fn.Name.Defn.Nbody.Len() != 0 && fn.Name.Param.Ntype != nil && fn.Name.Defn.Esc < EscFuncTagged {
+
+		fntype = fn.Type
 
 		// function in same mutually recursive group. Incorporate into flow graph.
 		if debugLevel(2) {
@@ -1105,14 +1109,21 @@ func (l *EscLocation) outlives(other *EscLocation) bool {
 	}
 
 	// Result parameters flow to the heap, so in effect they
-	// outlive any other location. Exception: Result parameters
-	// from directly called function literals flow only to the
-	// call site.
+	// outlive any other location.
 	//
-	// TODO(mdempsky): Cleanup explanation and double check this
-	// is actually working.
-	clo := l.curfn.Func.Closure
-	if l.isName(PPARAMOUT) && (oldEscCompat || clo == nil || clo.Func.Top&ctxCallee == 0) {
+	// TODO(mdempsky): It should be possible to optimize
+	// directly-called function literal result parameters, but
+	// it's probably not worth the complexity. For example:
+	//
+	//    var u int  // could be stack allocated
+	//    *(func() *int { return &u }()) = 42
+	//
+	//    func(p *int) {
+	//        *p = 42
+	//    }(func() *int {
+	//        return new(int)  // must be heap allocated
+	//    }())
+	if l.isName(PPARAMOUT) {
 		return true
 	}
 
@@ -1126,7 +1137,6 @@ func (l *EscLocation) outlives(other *EscLocation) bool {
 	//    }
 	if l.curfn == other.curfn && l.loopDepth < other.loopDepth {
 		return true
-
 	}
 
 	// If other is declared within a child closure of where l is
