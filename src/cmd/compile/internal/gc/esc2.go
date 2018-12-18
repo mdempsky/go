@@ -39,9 +39,6 @@ const esc2Live = false
 // reflect.Value.UnsafeAddr's receiver params as esc:0x12 because it
 // flows to the result as a uintptr, but we mark it as esc:0x1 here.
 
-// TODO(mdempsky): Fix Noescape on "defer func() { ... }()" and on
-// "range []T{...}".
-
 func (e *EscState) stmt(n *Node) {
 	if n == nil {
 		return
@@ -106,19 +103,19 @@ func (e *EscState) stmt(n *Node) {
 	case ORANGE:
 		// for List = range Right { Nbody }
 
+		// Right is evaluated outside the loop.
+		tv := e.newLoc(n)
+		tv.transient = false
+		e.value(EscHole{dst: tv}, n.Right)
+
 		e.loopdepth++
 		ks := e.addrs(n.List)
-		e.loopdepth--
-
-		// ORANGE node's Right is evaluated outside the loop
-		k := e.discardHole()
 		if len(ks) >= 2 {
-			k = ks[1]
-		}
-		if n.Right.Type.IsArray() {
-			e.value(k.note(n, "range"), n.Right)
-		} else {
-			e.value(k.deref(n, "range-deref"), n.Right)
+			if n.Right.Type.IsArray() {
+				e.flow(ks[1].note(n, "range"), tv)
+			} else {
+				e.flow(ks[1].deref(n, "range-deref"), tv)
+			}
 		}
 
 		e.loopdepth++
@@ -132,6 +129,7 @@ func (e *EscState) stmt(n *Node) {
 				k := e.discardHole()
 				if n.Left.Left != nil {
 					tv = e.newLoc(n.Left)
+					tv.transient = false
 					k = EscHole{dst: tv}
 				}
 				e.value(k, n.Left.Right)
@@ -207,7 +205,7 @@ func (e *EscState) stmt(n *Node) {
 	case OGO, ODEFER:
 		call := n.Left
 		if n.Op == ODEFER && e.loopdepth == 1 {
-			// TODO(mdempsky): Need to clear noescape on
+			// TODO(mdempsky): Need to clear transient on
 			// any temporaries generated here.
 			e.stmt(call)
 			break
@@ -946,6 +944,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 		transient: true,
 	}
 	allocLocs++
+	allLocs = append(allLocs, loc)
 	if n != nil {
 		escLocs[n] = loc
 
@@ -1042,6 +1041,7 @@ func (e *EscState) resultHoles() []EscHole {
 }
 
 var escLocs = map[*Node]*EscLocation{}
+var allLocs []*EscLocation
 
 func (e *EscState) setup(all []*Node) {
 	e.loopdepth = 1
@@ -1050,6 +1050,7 @@ func (e *EscState) setup(all []*Node) {
 		for _, dcl := range fn.Func.Dcl {
 			if dcl.Op == ONAME {
 				loc := e.newLoc(dcl)
+				loc.transient = false
 				if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
 					loc.paramEsc = EscHeap
 				}
@@ -1064,22 +1065,9 @@ func (e *EscState) setup(all []*Node) {
 }
 
 func (e *EscState) flood(all []*Node) {
-	for _, fn := range all {
-		Curfn = fn
-		if fn.Op != ODCLFUNC {
-			Warnl(fn.Pos, "what is it? %v", fn)
-			continue
-		}
-		for _, dcl := range fn.Func.Dcl {
-			// TODO(mdempsky): Sometimes this discovers
-			// new ONAMEs that weren't in setup. Probably
-			// from movetoheap?
-			if dcl.Op == ONAME {
-				e.walk(e.oldLoc(dcl))
-			}
-		}
+	for _, loc := range allLocs {
+		e.walk(loc)
 	}
-	Curfn = nil
 
 	e.walk(&HeapLoc)
 }
@@ -1122,7 +1110,7 @@ func (e *EscState) walk(root *EscLocation) {
 				}
 			}
 
-			if root == &HeapLoc || root.n != nil && root.n.Op == ONAME {
+			if !root.transient {
 				p.transient = false
 			}
 		}
@@ -1345,7 +1333,7 @@ func (e *EscState) cleanup(all []*Node) {
 				} else {
 					esc = EscNone
 				}
-			case OTYPESW:
+			case OTYPESW, ORANGE:
 				// Temporary location; not real.
 				continue
 			default:
@@ -1415,6 +1403,7 @@ func (e *EscState) cleanup(all []*Node) {
 	totalFlow += allocFlow
 
 	escLocs = map[*Node]*EscLocation{}
+	allLocs = nil
 
 	HeapLoc = EscLocation{}
 	BlankLoc = EscLocation{}
