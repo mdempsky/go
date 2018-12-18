@@ -204,6 +204,8 @@ func (e *EscState) stmt(n *Node) {
 	case OGO, ODEFER:
 		call := n.Left
 		if n.Op == ODEFER && e.loopdepth == 1 {
+			// TODO(mdempsky): Need to clear noescape on
+			// any temporaries generated here.
 			e.stmt(call)
 			break
 		}
@@ -852,6 +854,7 @@ type EscLocation struct {
 	distance int
 	walkgen  uint32
 	escapes  bool
+	noescape bool
 	paramEsc uint16
 }
 
@@ -937,6 +940,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 		n:         n,
 		curfn:     Curfn,
 		loopDepth: int(e.loopdepth),
+		noescape:  true,
 	}
 	allocLocs++
 	if n != nil {
@@ -1114,6 +1118,10 @@ func (e *EscState) walk(root *EscLocation) {
 					e.flow(EscHole{dst: &HeapLoc}, p)
 				}
 			}
+
+			if root == &HeapLoc || root.n != nil && root.n.Op == ONAME {
+				p.noescape = false
+			}
 		}
 
 		// p's value flows to root. If p is a function
@@ -1280,6 +1288,13 @@ func (e *EscState) cleanup(all []*Node) {
 				}
 			} else {
 				n.Esc = EscNone
+				if loc.noescape {
+					switch n.Op {
+					case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
+						n.SetNoescape(true)
+					}
+				}
+
 				if Debug['m'] != 0 && n.Op != ONAME {
 					Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
 				}
