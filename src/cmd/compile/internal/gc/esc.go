@@ -511,31 +511,35 @@ func escAnalyze(all []*Node, recursive bool) {
 
 	e.flood(all)
 
-	// visit the upstream of each dst, mark address nodes with
-	// addrescapes, mark parameters unsafe
-	escapes := make([]uint16, len(e.dsts))
-	for i, n := range e.dsts {
-		escapes[i] = n.Esc
-	}
-	for _, n := range e.dsts {
-		e.escflood(n)
-	}
-	for {
-		done := true
+	if !esc2Live {
+		// visit the upstream of each dst, mark address nodes with
+		// addrescapes, mark parameters unsafe
+		escapes := make([]uint16, len(e.dsts))
 		for i, n := range e.dsts {
-			if n.Esc != escapes[i] {
-				done = false
-				if Debug['m'] > 2 {
-					Warnl(n.Pos, "Reflooding %v %S", e.curfnSym(n), n)
+			escapes[i] = n.Esc
+		}
+		for _, n := range e.dsts {
+			e.escflood(n)
+		}
+		for {
+			done := true
+			for i, n := range e.dsts {
+				if n.Esc != escapes[i] {
+					done = false
+					if Debug['m'] > 2 {
+						Warnl(n.Pos, "Reflooding %v %S", e.curfnSym(n), n)
+					}
+					escapes[i] = n.Esc
+					e.escflood(n)
 				}
-				escapes[i] = n.Esc
-				e.escflood(n)
+			}
+			if done {
+				break
 			}
 		}
-		if done {
-			break
-		}
 	}
+
+	e.cleanup(all)
 
 	// for all top level functions, tag the typenodes corresponding to the param nodes
 	for _, n := range all {
@@ -544,19 +548,20 @@ func escAnalyze(all []*Node, recursive bool) {
 		}
 	}
 
-	if Debug['m'] != 0 {
-		for _, n := range e.noesc {
-			if n.Esc == EscNone {
-				Warnl(n.Pos, "%v %S does not escape", e.curfnSym(n), n)
+	if !esc2Live {
+		if Debug['m'] != 0 {
+			for _, n := range e.noesc {
+				if n.Esc == EscNone {
+					Warnl(n.Pos, "%v %S does not escape", e.curfnSym(n), n)
+				}
 			}
+		}
+
+		for _, x := range e.opts {
+			x.SetOpt(nil)
 		}
 	}
 
-	for _, x := range e.opts {
-		x.SetOpt(nil)
-	}
-
-	e.cleanup()
 }
 
 func (e *EscState) escfunc(fn *Node) {
@@ -570,35 +575,37 @@ func (e *EscState) escfunc(fn *Node) {
 	savefn := Curfn
 	Curfn = fn
 
-	for _, ln := range Curfn.Func.Dcl {
-		if ln.Op != ONAME {
-			continue
-		}
-		lnE := e.nodeEscState(ln)
-		switch ln.Class() {
-		// out params are in a loopdepth between the sink and all local variables
-		case PPARAMOUT:
-			lnE.Loopdepth = 0
-
-		case PPARAM:
-			lnE.Loopdepth = 1
-			if ln.Type != nil && !types.Haspointers(ln.Type) {
-				break
-			}
-			if Curfn.Nbody.Len() == 0 && !Curfn.Noescape() {
-				ln.Esc = EscHeap
-			} else {
-				ln.Esc = EscNone // prime for escflood later
-			}
-			e.noesc = append(e.noesc, ln)
-		}
-	}
-
-	// in a mutually recursive group we lose track of the return values
-	if e.recursive {
+	if !esc2Live {
 		for _, ln := range Curfn.Func.Dcl {
-			if ln.Op == ONAME && ln.Class() == PPARAMOUT {
-				e.escflows(&e.theSink, ln, e.stepAssign(nil, ln, ln, "returned from recursive function"))
+			if ln.Op != ONAME {
+				continue
+			}
+			lnE := e.nodeEscState(ln)
+			switch ln.Class() {
+			// out params are in a loopdepth between the sink and all local variables
+			case PPARAMOUT:
+				lnE.Loopdepth = 0
+
+			case PPARAM:
+				lnE.Loopdepth = 1
+				if ln.Type != nil && !types.Haspointers(ln.Type) {
+					break
+				}
+				if Curfn.Nbody.Len() == 0 && !Curfn.Noescape() {
+					ln.Esc = EscHeap
+				} else {
+					ln.Esc = EscNone // prime for escflood later
+				}
+				e.noesc = append(e.noesc, ln)
+			}
+		}
+
+		// in a mutually recursive group we lose track of the return values
+		if e.recursive {
+			for _, ln := range Curfn.Func.Dcl {
+				if ln.Op == ONAME && ln.Class() == PPARAMOUT {
+					e.escflows(&e.theSink, ln, e.stepAssign(nil, ln, ln, "returned from recursive function"))
+				}
 			}
 		}
 	}
@@ -608,7 +615,9 @@ func (e *EscState) escfunc(fn *Node) {
 	e.stmts(fn.Nbody)
 	e.loopdepth = 1
 
-	e.esclist(Curfn.Nbody, Curfn)
+	if !esc2Live {
+		e.esclist(Curfn.Nbody, Curfn)
+	}
 	Curfn = savefn
 	e.loopdepth = saveld
 }

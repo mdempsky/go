@@ -18,6 +18,10 @@ import (
 // TODO(mdempsky): Remove.
 const oldEscCompat = true
 
+// If esc2Live is true, then esc2.go drives escape analysis instead of
+// esc.go.
+const esc2Live = false
+
 // TODO(mdempsky): Document how to write and maintain code.
 //
 // In particular, it's important to always visit the entire AST. That
@@ -296,6 +300,9 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OADDR:
+		if Debug['m'] != 0 {
+			e.spill(k, n) // Close enough.
+		}
 		e.value(k.addr(n, "address-of"), n.Left) // "address-of"
 	case ODEREF:
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
@@ -353,7 +360,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OMAKECHAN, OMAKEMAP:
-		// e.spill(k, n)
+		e.spill(k, n) // TODO(mdempsky): Always spills.
 		e.discard(n.Left)
 
 	case OLEN, OCAP, OREAL, OIMAG:
@@ -402,7 +409,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		}
 
 	case OMAPLIT:
-		// e.spill(k, n) // TODO(mdempsky): Always leaks.
+		e.spill(k, n) // TODO(mdempsky): Always leaks.
 
 		// Keys and values make it to memory, lose loc.
 		for _, elt := range n.List.Slice() {
@@ -569,7 +576,7 @@ func (e *EscState) assign(dst, src *Node, why string, where *Node) {
 	// Filter out some no-op assignments for escape analysis.
 	ignore := (!oldEscCompat || why == "assign") && dst != nil && src != nil && e.isSelfAssign(dst, src)
 	if ignore && Debug['m'] != 0 {
-		Warnl(where.Pos, "%v ignoring self-assignment in %S", e.curfnSym(where), where)
+		Warnl(where.Pos, "%v ignoring self-assignment in %S", funcSym(Curfn), where)
 	}
 
 	if debugLevel(3) {
@@ -696,7 +703,7 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 		}
 
 		if nva == 0 {
-			dddK.dst.paramEsc = 42
+			call.Esc = 42
 		}
 	}
 
@@ -905,7 +912,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 		escLocs[n] = loc
 
 		// TODO(mdempsky): Perhaps set n.Esc and then just return &HeapLoc?
-		if /*n.Esc != EscHeap &&*/ n.Type != nil &&
+		if /*n.Esc != EscHeap &&*/ n.Type != nil && !loc.isName(PPARAM) && !loc.isName(PPARAMOUT) &&
 			(n.Type.Width > maxStackVarSize ||
 				(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
 				n.Op == OMAKESLICE && !isSmallMakeSlice(n)) {
@@ -1200,62 +1207,110 @@ func debugLevel(x int) bool {
 	return Debug['m'] >= x && os.Getenv("ESC2") != ""
 }
 
-func (e *EscState) cleanup() {
-	for n, loc := range escLocs {
-		var esc uint16 = EscUnknown
-		switch n.Op {
-		case OCALLFUNC, OCALLMETH, OCALLINTER:
-			// esc.go doesn't create ODDDARG for all
-			// calls. If it's missing, then walk.go treats
-			// it as EscUnknown.
-			if x := n.Right; x != nil {
-				esc = x.Esc
-			} else if loc.paramEsc == 42 {
+func (e *EscState) cleanup(all []*Node) {
+	if esc2Live {
+		for n, loc := range escLocs {
+			switch n.Op {
+			case OTYPESW:
 				continue
+			case OCALLFUNC, OCALLMETH, OCALLINTER:
+				n.Right = nodl(n.Pos, ODDDARG, nil, nil)
+				n = n.Right
 			}
-		case ONAME:
-			if n.Class() == PAUTOHEAP {
-				esc = EscHeap
+
+			// TODO(mdempsky): Describe path when Debug['m'] >= 2.
+
+			if loc.escapes {
+				if Debug['m'] != 0 && n.Op != ONAME {
+					Warnl(n.Pos, "%S escapes to heap", n)
+				}
+				n.Esc = EscHeap
+				addrescapes(n)
+			} else if loc.isName(PPARAM) {
+				n.Esc = finalizeEsc(loc.paramEsc)
+
+				if Debug['m'] != 0 && types.Haspointers(n.Type) {
+					if n.Esc == EscNone {
+						Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
+					} else if n.Esc == EscHeap {
+						Warnl(n.Pos, "leaking param: %S", n)
+					} else {
+						if n.Esc&EscContentEscapes != 0 {
+							Warnl(n.Pos, "leaking param content: %S", n)
+						}
+						for i := 0; i < 16; i++ {
+							x := (n.Esc >> uint(EscReturnBits+i*bitsPerOutputInTag)) & bitsMaskForTag
+							if x != 0 {
+								res := n.Name.Curfn.Type.Results().Field(i).Sym
+								Warnl(n.Pos, "leaking param: %S to result %v level=%d", n, res, x-1)
+							}
+						}
+					}
+				}
 			} else {
-				esc = EscNone
+				n.Esc = EscNone
+				if Debug['m'] != 0 && n.Op != ONAME {
+					Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
+				}
 			}
-		case OTYPESW:
-			// Temporary location; not real.
-			continue
-		default:
-			esc = n.Esc
 		}
-		escaped := esc != EscNone
-		if escaped != loc.escapes {
-			Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v", n, n.Op, esc, loc.escapes)
-		}
-
-		if n.Op == ONAME && n.Class() == PAUTOHEAP {
-			n = n.Name.Param.Stackcopy
-			if n == nil {
+	} else {
+		for n, loc := range escLocs {
+			var esc uint16 = EscUnknown
+			switch n.Op {
+			case OCALLFUNC, OCALLMETH, OCALLINTER:
+				// esc.go doesn't create ODDDARG for all
+				// calls. If it's missing, then walk.go treats
+				// it as EscUnknown.
+				if x := n.Right; x != nil {
+					esc = x.Esc
+				} else if n.Esc == 42 {
+					continue
+				}
+			case ONAME:
+				if n.Class() == PAUTOHEAP {
+					esc = EscHeap
+				} else {
+					esc = EscNone
+				}
+			case OTYPESW:
+				// Temporary location; not real.
 				continue
+			default:
+				esc = n.Esc
 			}
-		}
-		if n.Op == ONAME && n.Class() == PPARAM && types.Haspointers(n.Type) {
-			want := optimizeReturns(n.Esc)
-			if want == EscReturn|EscContentEscapes {
-				// esc.go leaves EscReturn sometimes
-				// when it doesn't matter.
-				want = EscNone | EscContentEscapes
+			escaped := esc != EscNone
+			if escaped != loc.escapes {
+				Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v", n, n.Op, esc, loc.escapes)
 			}
 
-			// TODO(mdempsky): It seems like I'm not
-			// handling escaped parameters
-			// correctly. Figure this out, and in the mean
-			// time, since 0 is nonsense, just use EscHeap
-			// conservatively.
-			if want == 0 {
-				want = EscHeap
+			if n.Op == ONAME && n.Class() == PAUTOHEAP {
+				n = n.Name.Param.Stackcopy
+				if n == nil {
+					continue
+				}
 			}
+			if n.Op == ONAME && n.Class() == PPARAM && types.Haspointers(n.Type) {
+				want := optimizeReturns(n.Esc)
+				if want == EscReturn|EscContentEscapes {
+					// esc.go leaves EscReturn sometimes
+					// when it doesn't matter.
+					want = EscNone | EscContentEscapes
+				}
 
-			loc.paramEsc = finalizeEsc(loc.paramEsc)
-			if want != loc.paramEsc {
-				Warnl(n.Pos, "waahh: %v is 0x%x, but 0x%x", n, want, loc.paramEsc)
+				// TODO(mdempsky): It seems like I'm not
+				// handling escaped parameters
+				// correctly. Figure this out, and in the mean
+				// time, since 0 is nonsense, just use EscHeap
+				// conservatively.
+				if want == 0 {
+					want = EscHeap
+				}
+
+				loc.paramEsc = finalizeEsc(loc.paramEsc)
+				if want != loc.paramEsc {
+					Warnl(n.Pos, "waahh: %v is 0x%x, but 0x%x", n, want, loc.paramEsc)
+				}
 			}
 		}
 	}
