@@ -202,16 +202,17 @@ func (e *EscState) stmt(n *Node) {
 	case OCALLFUNC, OCALLMETH, OCALLINTER:
 		e.call(nil, n)
 	case OGO, ODEFER:
+		call := n.Left
 		if n.Op == ODEFER && e.loopdepth == 1 {
-			e.stmt(n.Left)
+			e.stmt(call)
 			break
 		}
 
-		switch n.Left.Op {
+		switch call.Op {
 		case OCALLFUNC, OCALLMETH, OCALLINTER:
-			e.assignHeap(n.Left.Left, "go/defer func", n)
+			e.assignHeap(call.Left, "go/defer func", n)
 
-			args := n.Left.List.Slice()
+			args := call.List.Slice()
 			if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
 				var holes []EscHole
 				for i, n := 0, args[0].Type.NumFields(); i < n; i++ {
@@ -222,17 +223,21 @@ func (e *EscState) stmt(n *Node) {
 				for _, arg := range args {
 					e.assignHeap(arg, "go/defer func arg", n)
 				}
+				if call.Left.Type.IsVariadic() && !call.IsDDD() && len(args) >= call.Left.Type.NumParams() {
+					// TODO(mdempsky): Is this right?
+					e.spill(e.heapHole(), call)
+				}
 			}
 
 			// TODO(mdempsky): There should be a more
 			// generic way of handling these.
 		case OCLOSE, OPANIC:
-			e.assignHeap(n.Left.Left, "go/defer func arg", n)
+			e.assignHeap(call.Left, "go/defer func arg", n)
 		case OCOPY:
-			e.assignHeap(n.Left.Left, "go/defer func arg", n)
-			e.assignHeap(n.Left.Right, "go/defer func arg", n)
+			e.assignHeap(call.Left, "go/defer func arg", n)
+			e.assignHeap(call.Right, "go/defer func arg", n)
 		case ODELETE, OPRINT, OPRINTN:
-			for _, arg := range n.Left.List.Slice() {
+			for _, arg := range call.List.Slice() {
 				e.assignHeap(arg, "go/defer func arg", n)
 			}
 		case ORECOVER:
