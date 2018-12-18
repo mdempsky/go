@@ -203,14 +203,17 @@ func (e *EscState) stmt(n *Node) {
 	case OCALLFUNC, OCALLMETH, OCALLINTER:
 		e.call(nil, n)
 	case OGO, ODEFER:
+		call := n.Left
+		indirect := call.Op == OCALLFUNC && !(call.Left.Op == ONAME && call.Left.Class() == PFUNC || call.Left.Op == OCLOSURE) || call.Op == OCALLINTER
+
 		k := e.heapHole()
-		if n.Op == ODEFER && e.loopdepth == 1 {
+		if n.Op == ODEFER && e.loopdepth == 1 && !indirect {
 			tv := e.newLoc(n)
 			tv.transient = false
 			k = EscHole{dst: tv}
 		}
 
-		switch call := n.Left; call.Op {
+		switch call.Op {
 		case OCALLFUNC, OCALLMETH, OCALLINTER:
 			e.value(k.note(n, "go/defer func"), call.Left)
 
