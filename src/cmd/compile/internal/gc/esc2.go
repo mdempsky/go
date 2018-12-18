@@ -321,9 +321,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OADDR:
-		if Debug['m'] != 0 {
-			e.spill(k, n) // Close enough.
-		}
+		e.notTracked(n)
 		e.value(k.addr(n, "address-of"), n.Left) // "address-of"
 	case ODEREF:
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
@@ -363,6 +361,8 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	case OCONVIFACE:
 		if !n.Left.Type.IsInterface() && !isdirectiface(n.Left.Type) {
 			k = e.spill(k, n)
+		} else {
+			e.notTracked(n)
 		}
 		e.value(k.note(n, "interface-converted"), n.Left)
 
@@ -381,15 +381,19 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OMAKECHAN, OMAKEMAP:
-		e.spill(k, n) // TODO(mdempsky): Always spills.
+		e.notTracked(n)
 		e.discard(n.Left)
 
 	case OLEN, OCAP, OREAL, OIMAG:
 		e.discard(n.Left)
 	case OCOMPLEX:
-		// TODO(mdempsky): If n.List.Len() == 1, then complex(f()).
-		e.discard(n.Left)
-		e.discard(n.Right)
+		if n.List.Len() == 1 {
+			// complex(f())
+			e.call(nil, n.List.First())
+		} else {
+			e.discard(n.Left)
+			e.discard(n.Right)
+		}
 
 	case ORECOVER:
 		// nop
@@ -413,7 +417,6 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		}
 
 	case OSLICELIT:
-		// Slice is not leaked until proven otherwise
 		k = e.spill(k, n)
 
 		// Link values to slice
@@ -430,7 +433,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		}
 
 	case OMAPLIT:
-		e.spill(k, n) // TODO(mdempsky): Always leaks.
+		e.notTracked(n)
 
 		// Keys and values make it to memory, lose loc.
 		for _, elt := range n.List.Slice() {
@@ -1365,6 +1368,12 @@ func (e *EscState) cleanup(all []*Node) {
 
 	HeapLoc = EscLocation{}
 	BlankLoc = EscLocation{}
+}
+
+func (e *EscState) notTracked(n *Node) {
+	if Debug['m'] != 0 {
+		Warnl(n.Pos, "%S not tracked", n)
+	}
 }
 
 var allocLocs, maxLocs, totalLocs int
