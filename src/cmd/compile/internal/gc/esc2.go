@@ -1307,7 +1307,7 @@ func (e *EscState) cleanup(all []*Node) {
 					}
 				}
 
-				if Debug['m'] != 0 && n.Op != ONAME {
+				if Debug['m'] != 0 && n.Op != ONAME && n.Op != OTYPESW && n.Op != ORANGE && n.Op != ODEFER {
 					Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
 				}
 			}
