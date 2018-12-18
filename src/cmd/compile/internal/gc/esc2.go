@@ -1246,6 +1246,25 @@ func debugLevel(x int) bool {
 	return Debug['m'] >= x && os.Getenv("ESC2") != ""
 }
 
+func dddLen(n *Node) int {
+	switch n.Op {
+	case OCALLFUNC, OCALLMETH, OCALLINTER:
+	default:
+		Fatalf("%v doesn't need ... slice", n)
+	}
+
+	if !n.Left.Type.IsVariadic() {
+		// TODO(mdempsky): Should this be an error?
+		return 0
+	}
+
+	nargs := n.List.Len()
+	if nargs == 1 && n.List.First().Type.IsFuncArgStruct() {
+		nargs = n.List.First().Type.NumFields()
+	}
+	return nargs - (n.Left.Type.NumParams() - 1)
+}
+
 func (e *EscState) cleanup(all []*Node) {
 	if esc2Live {
 		for n, loc := range escLocs {
@@ -1253,8 +1272,12 @@ func (e *EscState) cleanup(all []*Node) {
 			case OTYPESW:
 				continue
 			case OCALLFUNC, OCALLMETH, OCALLINTER:
-				n.Right = nodl(n.Pos, ODDDARG, nil, nil)
-				n = n.Right
+				elt := n.Left.Type.Params().Field(n.Left.Type.NumParams() - 1).Type.Elem()
+				ddd := nodl(n.Pos, ODDDARG, nil, nil)
+				ddd.Type = types.NewPtr(types.NewArray(elt, int64(dddLen(n))))
+
+				n.Right = ddd
+				n = ddd
 			}
 
 			// TODO(mdempsky): Describe path when Debug['m'] >= 2.
