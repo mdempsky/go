@@ -854,11 +854,11 @@ type EscLocation struct {
 	curfn     *Node
 	loopDepth int
 
-	distance int
-	walkgen  uint32
-	escapes  bool
-	noescape bool
-	paramEsc uint16
+	distance  int
+	walkgen   uint32
+	escapes   bool
+	transient bool
+	paramEsc  uint16
 }
 
 type EscEdge struct {
@@ -943,7 +943,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 		n:         n,
 		curfn:     Curfn,
 		loopDepth: int(e.loopdepth),
-		noescape:  true,
+		transient: true,
 	}
 	allocLocs++
 	if n != nil {
@@ -1123,7 +1123,7 @@ func (e *EscState) walk(root *EscLocation) {
 			}
 
 			if root == &HeapLoc || root.n != nil && root.n.Op == ONAME {
-				p.noescape = false
+				p.transient = false
 			}
 		}
 
@@ -1314,7 +1314,7 @@ func (e *EscState) cleanup(all []*Node) {
 				}
 			} else {
 				n.Esc = EscNone
-				if loc.noescape {
+				if loc.transient {
 					switch n.Op {
 					case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
 						n.SetNoescape(true)
@@ -1358,8 +1358,8 @@ func (e *EscState) cleanup(all []*Node) {
 
 			switch n.Op {
 			case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
-				if n.Noescape() != loc.noescape {
-					Warnl(n.Pos, "noescape: %v want %v, but got %v", n, n.Noescape(), loc.noescape)
+				if n.Noescape() != loc.transient {
+					Warnl(n.Pos, "noescape: %v want %v, but got %v", n, n.Noescape(), loc.transient)
 				}
 			}
 
