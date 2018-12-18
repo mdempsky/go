@@ -39,6 +39,9 @@ const esc2Live = false
 // reflect.Value.UnsafeAddr's receiver params as esc:0x12 because it
 // flows to the result as a uintptr, but we mark it as esc:0x1 here.
 
+// TODO(mdempsky): Fix Noescape on "defer func() { ... }()" and on
+// "range []T{...}".
+
 func (e *EscState) stmt(n *Node) {
 	if n == nil {
 		return
@@ -1351,6 +1354,13 @@ func (e *EscState) cleanup(all []*Node) {
 			escaped := esc != EscNone
 			if escaped != loc.escapes {
 				Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v", n, n.Op, esc, loc.escapes)
+			}
+
+			switch n.Op {
+			case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
+				if n.Noescape() != loc.noescape {
+					Warnl(n.Pos, "noescape: %v want %v, but got %v", n, n.Noescape(), loc.noescape)
+				}
 			}
 
 			if n.Op == ONAME && n.Class() == PAUTOHEAP {
