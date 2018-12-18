@@ -206,6 +206,9 @@ func (e *EscState) stmt(n *Node) {
 		call := n.Left
 		indirect := call.Op == OCALLFUNC && !(call.Left.Op == ONAME && call.Left.Class() == PFUNC || call.Left.Op == OCLOSURE) || call.Op == OCALLINTER
 
+		// TODO(mdempsky): This is increasingly complex, and
+		// still not 100% correct. Now this isn't respecting
+		// direct call tags.
 		k := e.heapHole()
 		if n.Op == ODEFER && e.loopdepth == 1 && !indirect {
 			tv := e.newLoc(n)
