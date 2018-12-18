@@ -209,23 +209,37 @@ func (e *EscState) stmt(n *Node) {
 
 		switch n.Left.Op {
 		case OCALLFUNC, OCALLMETH, OCALLINTER:
-		default:
-			Fatalf("TODO: %v", n)
-		}
+			e.assignHeap(n.Left.Left, "go/defer func", n)
 
-		e.assignHeap(n.Left.Left, "go/defer func", n)
-
-		args := n.Left.List.Slice()
-		if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
-			var holes []EscHole
-			for i, n := 0, args[0].Type.NumFields(); i < n; i++ {
-				holes = append(holes, e.heapHole())
+			args := n.Left.List.Slice()
+			if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
+				var holes []EscHole
+				for i, n := 0, args[0].Type.NumFields(); i < n; i++ {
+					holes = append(holes, e.heapHole())
+				}
+				e.call(holes, args[0])
+			} else {
+				for _, arg := range args {
+					e.assignHeap(arg, "go/defer func arg", n)
+				}
 			}
-			e.call(holes, args[0])
-		} else {
-			for _, arg := range args {
+
+			// TODO(mdempsky): There should be a more
+			// generic way of handling these.
+		case OCLOSE, OPANIC:
+			e.assignHeap(n.Left.Left, "go/defer func arg", n)
+		case OCOPY:
+			e.assignHeap(n.Left.Left, "go/defer func arg", n)
+			e.assignHeap(n.Left.Right, "go/defer func arg", n)
+		case ODELETE, OPRINT, OPRINTN:
+			for _, arg := range n.Left.List.Slice() {
 				e.assignHeap(arg, "go/defer func arg", n)
 			}
+		case ORECOVER:
+			// nop
+
+		default:
+			Fatalf("TODO: %v", n)
 		}
 
 	case ORETJMP:
