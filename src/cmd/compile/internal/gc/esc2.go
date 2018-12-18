@@ -237,6 +237,8 @@ func (e *EscState) stmt(n *Node) {
 			e.assignHeap(call.Left, "go/defer func arg", n)
 			e.assignHeap(call.Right, "go/defer func arg", n)
 		case ODELETE, OPRINT, OPRINTN:
+			// TODO(mdempsky): Handle f(g()), but
+			// typecheck doesn't handle it either.
 			for _, arg := range call.List.Slice() {
 				e.assignHeap(arg, "go/defer func arg", n)
 			}
@@ -465,8 +467,10 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discards(n.List)
 
 	case OAPPEND:
-		// TODO(mdempsky): might be append(f())
 		args := n.List.Slice()
+		if len(args) == 1 {
+			Fatalf("TODO: %v", n)
+		}
 
 		if oldEscCompat && types.Haspointers(args[0].Type.Elem()) {
 			k = e.teeHole(k, e.heapHole().deref(n, "appendee slice"))
@@ -486,6 +490,9 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		}
 
 	case OCOPY:
+		// TODO(mdempsky): Handle copy(f()), but typecheck
+		// doesn't handle that anyway.
+
 		e.discard(n.Left)
 
 		k2 := e.discardHole()
