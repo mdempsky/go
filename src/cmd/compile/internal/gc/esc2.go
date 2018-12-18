@@ -203,17 +203,16 @@ func (e *EscState) stmt(n *Node) {
 	case OCALLFUNC, OCALLMETH, OCALLINTER:
 		e.call(nil, n)
 	case OGO, ODEFER:
-		call := n.Left
+		k := e.heapHole()
 		if n.Op == ODEFER && e.loopdepth == 1 {
-			// TODO(mdempsky): Need to clear transient on
-			// any temporaries generated here.
-			e.stmt(call)
-			break
+			tv := e.newLoc(n)
+			tv.transient = false
+			k = EscHole{dst: tv}
 		}
 
-		switch call.Op {
+		switch call := n.Left; call.Op {
 		case OCALLFUNC, OCALLMETH, OCALLINTER:
-			e.assignHeap(call.Left, "go/defer func", n)
+			e.value(k.note(n, "go/defer func"), call.Left)
 
 			args := call.List.Slice()
 			if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
@@ -224,26 +223,25 @@ func (e *EscState) stmt(n *Node) {
 				e.call(holes, args[0])
 			} else {
 				for _, arg := range args {
-					e.assignHeap(arg, "go/defer func arg", n)
+					e.value(k.note(n, "go/defer func arg"), arg)
 				}
-				if call.Left.Type.IsVariadic() && !call.IsDDD() && len(args) >= call.Left.Type.NumParams() {
-					// TODO(mdempsky): Is this right?
-					e.spill(e.heapHole(), call)
-				}
+			}
+			if dddLen(call) > 0 {
+				e.spill(k, call)
 			}
 
 			// TODO(mdempsky): There should be a more
 			// generic way of handling these.
 		case OCLOSE, OPANIC:
-			e.assignHeap(call.Left, "go/defer func arg", n)
+			e.value(k.note(n, "go/defer func arg"), call.Left)
 		case OCOPY:
-			e.assignHeap(call.Left, "go/defer func arg", n)
-			e.assignHeap(call.Right, "go/defer func arg", n)
+			e.value(k.note(n, "go/defer func arg"), call.Left)
+			e.value(k.note(n, "go/defer func arg"), call.Right)
 		case ODELETE, OPRINT, OPRINTN:
 			// TODO(mdempsky): Handle f(g()), but
 			// typecheck doesn't handle it either.
 			for _, arg := range call.List.Slice() {
-				e.assignHeap(arg, "go/defer func arg", n)
+				e.value(k.note(n, "go/defer func arg"), arg)
 			}
 		case ORECOVER:
 			// nop
@@ -1333,7 +1331,7 @@ func (e *EscState) cleanup(all []*Node) {
 				} else {
 					esc = EscNone
 				}
-			case OTYPESW, ORANGE:
+			case OTYPESW, ORANGE, ODEFER:
 				// Temporary location; not real.
 				continue
 			default:
