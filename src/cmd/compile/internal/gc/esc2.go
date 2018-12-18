@@ -379,9 +379,11 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.spill(k, n)
 		e.discard(n.Left)
 		e.discard(n.Right)
-
-	case OMAKECHAN, OMAKEMAP:
+	case OMAKECHAN:
 		e.notTracked(n)
+		e.discard(n.Left)
+	case OMAKEMAP:
+		e.spill(k, n)
 		e.discard(n.Left)
 
 	case OLEN, OCAP, OREAL, OIMAG:
@@ -433,7 +435,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		}
 
 	case OMAPLIT:
-		e.notTracked(n)
+		e.spill(k, n)
 
 		// Keys and values make it to memory, lose loc.
 		for _, elt := range n.List.Slice() {
