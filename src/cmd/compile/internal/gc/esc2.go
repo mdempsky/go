@@ -471,7 +471,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 
 	case OAPPEND:
 		args := n.List.Slice()
-		if len(args) == 1 {
+		if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
 			Fatalf("TODO: %v", n)
 		}
 
