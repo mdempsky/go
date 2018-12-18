@@ -282,7 +282,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		lineno = lno
 	}()
 
-	if !types.Haspointers(n.Type) && k.derefs >= 0 {
+	if !types.Haspointers(n.Type) && !isReflectHeaderDataField(n) && k.derefs >= 0 {
 		if debugLevel(2) && k.dst != &BlankLoc {
 			Warnl(n.Pos, "discarding value of non-pointer %v", n)
 		}
