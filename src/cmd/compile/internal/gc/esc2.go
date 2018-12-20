@@ -527,11 +527,17 @@ func (e *EscState) assignHeap(src *Node, why string, where *Node) {
 }
 
 func (e *EscState) call(ks []EscHole, call, where *Node) {
+	// TODO(mdempsky): This is still a mess. It should get better
+	// once we have early OAS2FUNC though (#29197).
+
 	var fn, recv *Node
 	args := call.List.Slice()
 	switch call.Op {
 	case OCALLFUNC:
 		fn = call.Left
+		if !oldEscCompat && fn.Op == OCLOSURE {
+			fn = fn.Func.Closure.Func.Nname
+		}
 	case OCALLMETH:
 		fn = asNode(call.Left.Sym.Def)
 		recv = call.Left.Left
@@ -676,8 +682,11 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 
 	// TODO(mdempsky): Handle implicit conversions.
 
-	if call.Op == OCALLFUNC && !direct {
-		k := e.teeHole(ks...).deref(call, "captured by called closure")
+	if call.Op == OCALLFUNC {
+		k := e.discardHole()
+		if !direct {
+			k = e.teeHole(ks...).deref(call, "captured by called closure")
+		}
 		if where != nil {
 			if where.Op == ODEFER && e.loopdepth == 1 {
 				loc := e.newLoc(nil)
