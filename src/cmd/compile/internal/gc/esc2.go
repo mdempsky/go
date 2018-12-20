@@ -165,6 +165,9 @@ func (e *EscState) stmt(n *Node) {
 	case OSELRECV2:
 		e.assign(n.Left, n.Right, "selrecv", n)
 		e.assign(n.List.First(), nil, "selrecv", n)
+	case ORECV:
+		// TODO(mdempsky): Consider e.discard(n.Left).
+		e.valueSkipInit(e.discardHole(), n) // already visited Ninit
 	case OSEND:
 		e.discard(n.Left)
 		e.assignHeap(n.Right, "send", n)
@@ -188,86 +191,24 @@ func (e *EscState) stmt(n *Node) {
 		e.assign(n.List.Second(), nil, "assign-pair-receive", n)
 
 	case OAS2FUNC:
-		e.call(e.addrs(n.List), n.Rlist.First())
+		e.call(e.addrs(n.List), n.Rlist.First(), nil)
 	case ORETURN:
 		ks := e.resultHoles()
 		if len(ks) > 1 && n.List.Len() == 1 {
 			// TODO(mdempsky): Handle implicit conversions.
-			e.call(ks, n.List.First())
+			e.call(ks, n.List.First(), nil)
 		} else {
 			for i, v := range n.List.Slice() {
 				e.value(ks[i], v)
 			}
 		}
-	case OCALLFUNC, OCALLMETH, OCALLINTER:
-		e.call(nil, n)
+	case OCALLFUNC, OCALLMETH, OCALLINTER, OCLOSE, OCOPY, ODELETE, OPANIC, OPRINT, OPRINTN, ORECOVER:
+		e.call(nil, n, nil)
 	case OGO, ODEFER:
-		call := n.Left
-		indirect := call.Op == OCALLFUNC && !(call.Left.Op == ONAME && call.Left.Class() == PFUNC || call.Left.Op == OCLOSURE) || call.Op == OCALLINTER
-
-		// TODO(mdempsky): This is increasingly complex, and
-		// still not 100% correct. Now this isn't respecting
-		// direct call tags.
-		k := e.heapHole()
-		if n.Op == ODEFER && e.loopdepth == 1 && !indirect {
-			tv := e.newLoc(n)
-			tv.transient = false
-			k = EscHole{dst: tv}
-		}
-
-		switch call.Op {
-		case OCALLFUNC, OCALLMETH, OCALLINTER:
-			e.value(k.note(n, "go/defer func"), call.Left)
-
-			args := call.List.Slice()
-			if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
-				var holes []EscHole
-				for i, n := 0, args[0].Type.NumFields(); i < n; i++ {
-					holes = append(holes, e.heapHole())
-				}
-				e.call(holes, args[0])
-			} else {
-				for _, arg := range args {
-					e.value(k.note(n, "go/defer func arg"), arg)
-				}
-			}
-			if dddLen(call) > 0 {
-				e.spill(k, call)
-			}
-
-			// TODO(mdempsky): There should be a more
-			// generic way of handling these.
-		case OCLOSE, OPANIC:
-			e.value(k.note(n, "go/defer func arg"), call.Left)
-		case OCOPY:
-			e.value(k.note(n, "go/defer func arg"), call.Left)
-			e.value(k.note(n, "go/defer func arg"), call.Right)
-		case ODELETE, OPRINT, OPRINTN:
-			// TODO(mdempsky): Handle f(g()), but
-			// typecheck doesn't handle it either.
-			for _, arg := range call.List.Slice() {
-				e.value(k.note(n, "go/defer func arg"), arg)
-			}
-		case ORECOVER:
-			// nop
-
-		default:
-			Fatalf("TODO: %v", n)
-		}
+		e.call(nil, n.Left, n)
 
 	case ORETJMP:
 		// TODO(mdempsky): What do? esc.go just ignores it.
-
-	case OCLOSE:
-		e.discard(n.Left)
-	case OPANIC:
-		e.assignHeap(n.Left, "panic", n)
-	case ODELETE, OPRINT, OPRINTN:
-		// TODO(mdempsky): Handle f(g()).
-		e.discards(n.List)
-
-	case OCOPY, ORECOVER, ORECV:
-		e.valueSkipInit(e.discardHole(), n)
 	}
 }
 
@@ -375,8 +316,8 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	case ORECV:
 		e.discard(n.Left)
 
-	case OCALLMETH, OCALLFUNC, OCALLINTER:
-		e.call([]EscHole{k}, n)
+	case OCALLMETH, OCALLFUNC, OCALLINTER, OLEN, OCAP, OCOMPLEX, OREAL, OIMAG, OAPPEND, OCOPY:
+		e.call([]EscHole{k}, n, nil)
 
 	case ONEW:
 		e.spill(k, n)
@@ -391,17 +332,6 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	case OMAKEMAP:
 		e.spill(k, n)
 		e.discard(n.Left)
-
-	case OLEN, OCAP, OREAL, OIMAG:
-		e.discard(n.Left)
-	case OCOMPLEX:
-		if n.List.Len() == 1 {
-			// complex(f())
-			e.call(nil, n.List.First())
-		} else {
-			e.discard(n.Left)
-			e.discard(n.Right)
-		}
 
 	case ORECOVER:
 		// nop
@@ -476,41 +406,6 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		// Arguments of OADDSTR do not escape:
 		// runtime.concatstrings makes sure of that.
 		e.discards(n.List)
-
-	case OAPPEND:
-		args := n.List.Slice()
-		if len(args) == 1 && args[0].Type.IsFuncArgStruct() {
-			Fatalf("TODO: %v", n)
-		}
-
-		if oldEscCompat && types.Haspointers(args[0].Type.Elem()) {
-			k = e.teeHole(k, e.heapHole().deref(n, "appendee slice"))
-		}
-		e.value(k, args[0])
-
-		if n.IsDDD() {
-			k2 := e.discardHole()
-			if oldEscCompat && args[1].Type.IsSlice() && types.Haspointers(args[1].Type.Elem()) {
-				k2 = e.heapHole().deref(n, "appended slice...")
-			}
-			e.value(k2, args[1])
-		} else {
-			for _, arg := range args[1:] {
-				e.assignHeap(arg, "appended to slice", n)
-			}
-		}
-
-	case OCOPY:
-		// TODO(mdempsky): Handle copy(f()), but typecheck
-		// doesn't handle that anyway.
-
-		e.discard(n.Left)
-
-		k2 := e.discardHole()
-		if n.Right.Type.IsSlice() && types.Haspointers(n.Right.Type.Elem()) {
-			k2 = e.heapHole().deref(n, "copied slice")
-		}
-		e.value(k2, n.Right)
 	}
 }
 
@@ -631,67 +526,58 @@ func (e *EscState) assignHeap(src *Node, why string, where *Node) {
 	e.value(e.heapHole().note(where, why), src)
 }
 
-func (e *EscState) call(ks []EscHole, call *Node) {
-	if ks != nil && len(ks) != call.Left.Type.NumResults() {
-		Warnl(call.Pos, "expect %v values, but %v has %v results", len(ks), call.Left, call.Left.Type.NumResults())
-	}
-
-	// TODO(mdempsky): Should this handle builtin calls too?
-
-	var indirect bool
-	var fn *Node
+func (e *EscState) call(ks []EscHole, call, where *Node) {
+	var fn, recv *Node
+	args := call.List.Slice()
 	switch call.Op {
-	default:
-		Fatalf("esccall: %v", call.Op)
-
 	case OCALLFUNC:
 		fn = call.Left
-
-		// TODO(mdempsky): If fn.Op == OCLOSURE, we can
-		// replace fn with fn.Func.Closure.Func.Nname. In this
-		// case, we don't need to treat the closure's return
-		// values as inherently escaping either.
-
-		// TODO(mdempsky): Is handling method expressions
-		// really this simple?
-		//
-		// if fn.isMethodExpression() {
-		// 	fn = asNode(fn.Sym.Def)
-		// }
-
-		indirect = fn.Op != ONAME || fn.Class() != PFUNC
-
 	case OCALLMETH:
 		fn = asNode(call.Left.Sym.Def)
-
+		recv = call.Left.Left
 	case OCALLINTER:
-		indirect = true
+		recv = call.Left.Left
+	case OAPPEND, ODELETE, OPRINT, OPRINTN, ORECOVER:
+		// ok
+	case OLEN, OCAP, OREAL, OIMAG, OCLOSE, OPANIC:
+		args = []*Node{call.Left}
+	case OCOMPLEX, OCOPY:
+		if call.Left != nil {
+			args = []*Node{call.Left, call.Right}
+		}
+	default:
+		Fatalf("unexpected call op: %v", call.Op)
 	}
 
-	fntype := call.Left.Type
+	direct := fn != nil && fn.Op == ONAME && fn.Class() == PFUNC
 
+	var fntype *types.Type
 	var recvK EscHole
 	var paramKs []EscHole
 
-	if debugLevel(2) {
-		Dump("call", call)
-	}
-
-	// Warnl(call.Pos, "figuring out how to call %v", call)
-
-	if !indirect && fn != nil && fn.Op == ONAME && fn.Class() == PFUNC &&
-		fn.Name.Defn != nil && fn.Name.Defn.Nbody.Len() != 0 && fn.Name.Param.Ntype != nil && fn.Name.Defn.Esc < EscFuncTagged {
-
-		fntype = fn.Type
-
-		// function in same mutually recursive group. Incorporate into flow graph.
-		if debugLevel(2) {
-			Warnl(call.Pos, "calling %v recursively", call)
+	if where != nil && !(where.Op == ODEFER && e.loopdepth == 1) {
+		if recv != nil {
+			recvK = e.heapHole()
 		}
+		for range args {
+			paramKs = append(paramKs, e.heapHole())
+		}
+		switch call.Op {
+		case OCALLFUNC, OCALLMETH, OCALLINTER:
+			fntype = call.Left.Type
+		}
+	} else if direct && fn.Name.Defn != nil && fn.Name.Defn.Esc < EscFuncTagged {
+		// Function in same mutually recursive
+		// group. Incorporate into flow graph.
 
+		if fn.Name.Defn.Nbody.Len() == 0 || fn.Name.Param.Ntype == nil {
+			Fatalf("huh, those checks did matter")
+		}
 		if fn.Name.Defn.Esc == EscFuncUnknown {
 			Fatalf("graph inconsistency")
 		}
+
+		fntype = fn.Type
 
 		// Results.
 		if ks != nil {
@@ -700,31 +586,75 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 			}
 		}
 
-		// Receiver.
-		if call.Op != OCALLFUNC {
-			recvK = e.paramHole(fntype.Recv())
-		}
-
 		// Parameters.
+		if r := fntype.Recv(); r != nil {
+			recvK = e.paramHole(r)
+		}
 		for _, param := range fntype.Params().FieldSlice() {
 			paramKs = append(paramKs, e.paramHole(param))
 		}
-	} else {
+	} else if call.Op == OCALLFUNC || call.Op == OCALLMETH || call.Op == OCALLINTER {
+		if call.Op == OCALLMETH {
+			direct = true // ugh
+		}
+		fntype = call.Left.Type
 		if debugLevel(2) {
-			Warnl(call.Pos, "calling %v/%v using its tags (indirect=%v)", fn, fntype, indirect)
+			Warnl(call.Pos, "calling %v/%v using its tags (direct=%v)", call.Left, fntype, direct)
 		}
 
-		// If there is a receiver, it also leaks to heap.
-		if call.Op != OCALLFUNC {
-			recvK = e.tagHole(ks, indirect, fntype.Recv())
+		if r := fntype.Recv(); r != nil {
+			recvK = e.tagHole(ks, !direct, r, where == nil)
 		}
-
 		for _, param := range fntype.Params().FieldSlice() {
-			paramKs = append(paramKs, e.tagHole(ks, indirect, param))
+			paramKs = append(paramKs, e.tagHole(ks, !direct, param, where == nil))
+		}
+	} else {
+		// Handle escape analysis for builtins.
+
+		// By default, we just discard everything. However, if
+		// we're in a top-level defer statement, we can't
+		// allow transient values.
+		k := e.discardHole()
+		if where != nil {
+			loc := e.newLoc(where)
+			loc.transient = false
+			k = EscHole{dst: loc}
+		}
+		for range args {
+			paramKs = append(paramKs, k)
+		}
+
+		switch call.Op {
+		case OAPPEND:
+			// Appendee slice flows to result. Also, in
+			// esc.go compat mode, we flow its elements to
+			// the heap.
+			paramKs[0] = e.teeHole(paramKs[0], ks[0])
+			if oldEscCompat && types.Haspointers(args[0].Type.Elem()) {
+				paramKs[0] = e.teeHole(paramKs[0], e.heapHole().deref(call, "appendee slice"))
+			}
+
+			if call.IsDDD() {
+				if args[1].Type.IsSlice() && types.Haspointers(args[1].Type.Elem()) {
+					paramKs[1] = e.teeHole(paramKs[1], e.heapHole().deref(call, "appended slice..."))
+				}
+			} else {
+				for i := 1; i < len(args); i++ {
+					paramKs[i] = e.heapHole()
+				}
+			}
+
+		case OCOPY:
+			if call.Right.Type.IsSlice() && types.Haspointers(call.Right.Type.Elem()) {
+				paramKs[1] = e.teeHole(paramKs[1], e.heapHole().deref(call, "copied slice"))
+			}
+
+		case OPANIC:
+			paramKs[0] = e.heapHole()
 		}
 	}
 
-	if fntype.IsVariadic() && !call.IsDDD() {
+	if fntype != nil && fntype.IsVariadic() && !call.IsDDD() {
 		vi := fntype.NumParams() - 1
 
 		nva := call.List.Len()
@@ -746,21 +676,32 @@ func (e *EscState) call(ks []EscHole, call *Node) {
 
 	// TODO(mdempsky): Handle implicit conversions.
 
-	if call.Op != OCALLFUNC {
-		e.value(recvK, call.Left.Left)
-	} else if indirect {
-		// indirect and OCALLFUNC = could be captured variables, too. (#14409)
-		e.value(e.teeHole(ks...).deref(call, "captured by called closure"), fn)
+	if call.Op == OCALLFUNC && !direct {
+		k := e.teeHole(ks...).deref(call, "captured by called closure")
+		if where != nil {
+			if where.Op == ODEFER && e.loopdepth == 1 {
+				loc := e.newLoc(nil)
+				loc.transient = false
+				k = EscHole{dst: loc}
+			} else {
+				k = e.heapHole()
+			}
+		}
+		e.value(k, call.Left)
+	}
+
+	if recv != nil {
+		e.value(recvK, recv)
 	}
 
 	if len(paramKs) > 1 && call.List.Len() == 1 {
-		e.call(paramKs, call.List.First())
+		e.call(paramKs, call.List.First(), nil)
 	} else {
-		for i, arg := range call.List.Slice() {
+		for i, arg := range args {
 			// For arguments to go:uintptrescapes, peel
 			// away an unsafe.Pointer->uintptr conversion,
 			// if present.
-			if !indirect && arg.Op == OCONVNOP && arg.Type.Etype == TUINTPTR && arg.Left.Type.Etype == TUNSAFEPTR {
+			if direct && arg.Op == OCONVNOP && arg.Type.Etype == TUINTPTR && arg.Left.Type.Etype == TUNSAFEPTR {
 				x := i
 				if fntype.IsVariadic() && x >= fntype.NumParams() {
 					x = fntype.NumParams() - 1
@@ -797,7 +738,7 @@ func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	return EscHole{dst: loc}
 }
 
-func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscHole {
+func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field, transient bool) EscHole {
 	tag := param.Note
 	if debugLevel(2) {
 		fmt.Printf("tagHole: [%v] = %q, indirect=%v\n", ks, tag, indirect)
@@ -829,6 +770,13 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field) EscH
 		return e.heapHole()
 	}
 	if esc == EscNone {
+		if !transient {
+			// TODO(mdempsky): Use a reusable location for
+			// this, like BlankLoc.
+			loc := e.newLoc(nil)
+			loc.transient = false
+			return EscHole{dst: loc}
+		}
 		return e.discardHole()
 	}
 
