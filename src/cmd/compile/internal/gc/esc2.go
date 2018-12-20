@@ -1413,7 +1413,7 @@ func (e *EscState) cleanup(all []*Node) {
 }
 
 func (e *EscState) notTracked(n *Node) {
-	if Debug['m'] != 0 {
+	if esc2Live && Debug['m'] != 0 {
 		Warnl(n.Pos, "%S %S not tracked", funcSym(Curfn), n)
 	}
 }
