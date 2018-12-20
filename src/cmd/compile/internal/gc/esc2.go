@@ -118,7 +118,6 @@ func (e *EscState) stmt(n *Node) {
 			}
 		}
 
-		e.loopdepth++
 		e.stmts(n.Nbody)
 		e.loopdepth--
 
