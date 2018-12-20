@@ -106,7 +106,7 @@ func (e *EscState) stmt(n *Node) {
 		// Right is evaluated outside the loop.
 		tv := e.newLoc(n)
 		tv.transient = false
-		e.value(EscHole{dst: tv}, n.Right)
+		e.value(tv.asHole(), n.Right)
 
 		e.loopdepth++
 		ks := e.addrs(n.List)
@@ -129,7 +129,7 @@ func (e *EscState) stmt(n *Node) {
 				if n.Left.Left != nil {
 					tv = e.newLoc(n.Left)
 					tv.transient = false
-					k = EscHole{dst: tv}
+					k = tv.asHole()
 				}
 				e.value(k, n.Left.Right)
 			} else {
@@ -469,7 +469,7 @@ func (e *EscState) addr(n *Node) EscHole {
 		if n.IsClosureVar() {
 			n = n.Name.Defn
 		}
-		k = EscHole{dst: e.oldLoc(n)}
+		k = e.oldLoc(n).asHole()
 	case ODOT:
 		k = e.addr(n.Left)
 	case OINDEX:
@@ -624,7 +624,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 		if where != nil {
 			loc := e.newLoc(where)
 			loc.transient = false
-			k = EscHole{dst: loc}
+			k = loc.asHole()
 		}
 		for range args {
 			paramKs = append(paramKs, k)
@@ -691,7 +691,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 			if where.Op == ODEFER && e.loopdepth == 1 {
 				loc := e.newLoc(nil)
 				loc.transient = false
-				k = EscHole{dst: loc}
+				k = loc.asHole()
 			} else {
 				k = e.heapHole()
 			}
@@ -729,7 +729,7 @@ func (e *EscState) paramHole(param *types.Field) EscHole {
 	if !types.Haspointers(param.Type) {
 		return e.discardHole()
 	}
-	return EscHole{dst: e.oldLoc(asNode(param.Nname))}
+	return e.oldLoc(asNode(param.Nname)).asHole()
 }
 
 func (e *EscState) teeHole(ks ...EscHole) EscHole {
@@ -744,7 +744,7 @@ func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	for _, k := range ks {
 		e.flow(k, loc)
 	}
-	return EscHole{dst: loc}
+	return loc.asHole()
 }
 
 func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field, transient bool) EscHole {
@@ -784,7 +784,7 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field, tran
 			// this, like BlankLoc.
 			loc := e.newLoc(nil)
 			loc.transient = false
-			return EscHole{dst: loc}
+			return loc.asHole()
 		}
 		return e.discardHole()
 	}
@@ -803,7 +803,7 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field, tran
 		}
 	}
 
-	return EscHole{dst: loc}
+	return loc.asHole()
 }
 
 type EscLocation struct {
@@ -848,13 +848,13 @@ func (k EscHole) addr(where *Node, why string) EscHole  { return k.shift(-1).not
 func (e *EscState) dcl(n *Node) EscHole {
 	loc := e.oldLoc(n)
 	loc.loopDepth = int(e.loopdepth)
-	return EscHole{dst: loc}
+	return loc.asHole()
 }
 
 func (e *EscState) spill(k EscHole, n *Node) EscHole {
 	loc := e.newLoc(n)
 	e.flow(k.addr(n, "spill"), loc)
-	return EscHole{dst: loc}
+	return loc.asHole()
 }
 
 func normalize(n *Node) *Node {
@@ -943,6 +943,10 @@ var (
 	BlankLoc EscLocation
 )
 
+func (l *EscLocation) asHole() EscHole {
+	return EscHole{dst: l}
+}
+
 func (l *EscLocation) String() string {
 	switch l {
 	case &HeapLoc:
@@ -985,8 +989,8 @@ func (e *EscState) flow(k EscHole, src_ *EscLocation) {
 	}
 }
 
-func (e *EscState) heapHole() EscHole    { return EscHole{dst: &HeapLoc} }
-func (e *EscState) discardHole() EscHole { return EscHole{dst: &BlankLoc} }
+func (e *EscState) heapHole() EscHole    { return HeapLoc.asHole() }
+func (e *EscState) discardHole() EscHole { return BlankLoc.asHole() }
 
 func (e *EscState) resultHoles() []EscHole {
 	var ks []EscHole
@@ -994,7 +998,7 @@ func (e *EscState) resultHoles() []EscHole {
 		if !types.Haspointers(f.Type) {
 			ks = append(ks, e.discardHole())
 		} else {
-			ks = append(ks, EscHole{dst: e.oldLoc(asNode(f.Nname))})
+			ks = append(ks, e.oldLoc(asNode(f.Nname)).asHole())
 		}
 	}
 	return ks
@@ -1066,7 +1070,7 @@ func (e *EscState) walk(root *EscLocation) {
 
 				// TODO(mdempsky): This is clumsy.
 				if root != &HeapLoc {
-					e.flow(EscHole{dst: &HeapLoc}, p)
+					e.flow(HeapLoc.asHole(), p)
 				}
 			}
 
