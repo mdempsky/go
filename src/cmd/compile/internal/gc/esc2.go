@@ -836,36 +836,29 @@ func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field, tran
 	if err != nil {
 		Fatalf("weird tag: %q -> %v", tag, err)
 	}
-
 	if esc == EscHeap {
 		return e.heapHole()
 	}
-	if esc == EscNone {
-		if !transient {
-			// TODO(mdempsky): Use a reusable location for
-			// this, like BlankLoc.
-			loc := e.newLoc(nil)
-			loc.transient = false
-			return loc.asHole()
-		}
-		return e.discardHole()
+
+	var tagKs []EscHole
+	if !transient {
+		loc := e.newLoc(nil)
+		loc.transient = false
+		tagKs = append(tagKs, loc.asHole())
 	}
 
-	// TODO(mdempsky): Should there be a Node for this?
-	loc := e.newLoc(nil)
-
 	if esc&EscContentEscapes != 0 {
-		e.flow(e.heapHole().shift(1), loc)
+		tagKs = append(tagKs, e.heapHole().shift(1))
 	}
 
 	for i, k := range ks {
 		x := int(esc>>uint(EscReturnBits+i*bitsPerOutputInTag)) & int(bitsMaskForTag)
 		if x != 0 {
-			e.flow(k.shift(x-1), loc)
+			tagKs = append(tagKs, k.shift(x-1))
 		}
 	}
 
-	return loc.asHole()
+	return e.teeHole(tagKs...)
 }
 
 type EscLocation struct {
