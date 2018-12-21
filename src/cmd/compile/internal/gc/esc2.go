@@ -852,6 +852,9 @@ func (e *EscState) dcl(n *Node) EscHole {
 }
 
 func (e *EscState) spill(k EscHole, n *Node) EscHole {
+	// TODO(mdempsky): Optimize. E.g., if k is the heap or blank,
+	// then we already know whether n leaks, and we can return a
+	// more optimized hole.
 	loc := e.newLoc(n)
 	e.flow(k.addr(n, "spill"), loc)
 	return loc.asHole()
