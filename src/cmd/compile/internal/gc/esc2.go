@@ -339,8 +339,10 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 	case OCALLPART:
 		e.spill(k, n)
 
-		// Contents make it to memory, lose loc.
-		// TODO(mdempsky): What does this mean?
+		// esc.go says "Contents make it to memory, lose
+		// track."  I think we can just flow n.Left to our
+		// spilled location though.
+		// TODO(mdempsky): Try that.
 		e.assignHeap(n.Left, "call part", n)
 
 	case OPTRLIT:
@@ -588,16 +590,16 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 		// Results.
 		if ks != nil {
 			for i, result := range fntype.Results().FieldSlice() {
-				e.flow(ks[i], e.oldLoc(asNode(result.Nname)))
+				e.value(ks[i], asNode(result.Nname))
 			}
 		}
 
 		// Parameters.
 		if r := fntype.Recv(); r != nil {
-			recvK = e.paramHole(r)
+			recvK = e.addr(asNode(r.Nname))
 		}
 		for _, param := range fntype.Params().FieldSlice() {
-			paramKs = append(paramKs, e.paramHole(param))
+			paramKs = append(paramKs, e.addr(asNode(param.Nname)))
 		}
 	} else if call.Op == OCALLFUNC || call.Op == OCALLMETH || call.Op == OCALLINTER {
 		if call.Op == OCALLMETH {
@@ -725,13 +727,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 	}
 }
 
-func (e *EscState) paramHole(param *types.Field) EscHole {
-	if !types.Haspointers(param.Type) {
-		return e.discardHole()
-	}
-	return e.oldLoc(asNode(param.Nname)).asHole()
-}
-
+// teeHole returns a new hole that flows into each of ks.
 func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	if len(ks) == 0 {
 		return e.discardHole()
@@ -740,8 +736,20 @@ func (e *EscState) teeHole(ks ...EscHole) EscHole {
 		return ks[0]
 	}
 
+	// Given holes l1 <- _, l2 <- **_, l3 <- *_, ..., create a new
+	// temporary location ltmp, wire it into place, and return a
+	// hole for ltmp <- _.
 	loc := e.newLoc(nil)
 	for _, k := range ks {
+		if k.derefs < 0 {
+			// N.B., "p <- &q" and "p <- &tmp; tmp <- q"
+			// are not semantically equivalent. If we have
+			// holes like "l1 <- _, l2 <- &_", then we'd
+			// need to wire as "l1 <- *ltmp, l2 <- ltmp"
+			// and return "ltmp <- &_".
+			// TODO(mdempsky): What if that thing I just said.
+			Fatalf("teeHole: negative derefs")
+		}
 		e.flow(k, loc)
 	}
 	return loc.asHole()
@@ -998,11 +1006,7 @@ func (e *EscState) discardHole() EscHole { return BlankLoc.asHole() }
 func (e *EscState) resultHoles() []EscHole {
 	var ks []EscHole
 	for _, f := range Curfn.Type.Results().FieldSlice() {
-		if !types.Haspointers(f.Type) {
-			ks = append(ks, e.discardHole())
-		} else {
-			ks = append(ks, e.oldLoc(asNode(f.Nname)).asHole())
-		}
+		ks = append(ks, e.addr(asNode(f.Nname)))
 	}
 	return ks
 }
