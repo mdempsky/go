@@ -13,6 +13,61 @@ import (
 	"strings"
 )
 
+// Escape analysis.
+//
+// Here we analyze functions to determine whether Go variables can be
+// allocated on the stack. The two key invariants we have to respect
+// are: (1) objects allocated on the heap cannot point to objects on
+// the stack, and (2) a pointer to a stack object cannot outlive that
+// object (e.g., either because the function returned or its space is
+// reused in a loop).
+//
+// We implement this with a simple data-flow analysis algorithm. For
+// every Go variable, we create a "location." We then lower all Go
+// statements into edges representing an assignment between the two,
+// possibly with an addressing operation or an arbitrary number of
+// dereference operations. For example:
+//
+//     p = &q    // -1
+//     p = q     //  0
+//     p = *q    //  1
+//     p = **q   //  2
+//
+// Note that "p = &&q" is invalid, so the dereferences count can never
+// go below -1.
+//
+// Assignments can also be directly to the heap.
+//
+// All Go language constructs are lowered into this graph
+// representation. For example:
+//
+//     var x struct { f, g *int }
+//     var u []*int
+//
+//     x.f = u[0]
+//
+// is modeled as
+//
+//     x = *u
+//
+// We then define dist(p, q) as the shortest path distance from p to q
+// on this graph, except that intermediate distance is bounded at 0.
+// For example:
+//
+//     p = **q    //  2
+//     q = &r     // -1
+//     r = *s     //  1
+//
+// We have dist(p, r) == 1, dist(p, s) == 3, dist(q, s) == 1.
+//
+// Intuitively, if dist(p, q) == 0, then any value stored in q may be
+// stored in p; if dist(p, q) == 1, then any value *pointed to* by q
+// may be stored in p; and so on.
+//
+// Finally, if there exists p,q,r such that dist(p, q) == 0 and q =
+// &r, then r's address leaks to p. If p outlives r, then r must be
+// heap allocated.
+
 // If oldEscCompat is true, we try to be more compatible with esc.go's
 // quirks.
 // TODO(mdempsky): Remove.
@@ -832,6 +887,9 @@ type EscEdge struct {
 	derefs int
 }
 
+// An EscHole represents a context for evaluation a Go
+// expression. Intuitively, when evaluating x in "l = **x", we'd have
+// a hole with dst==l and derefs==2.
 type EscHole struct {
 	dst    *EscLocation
 	derefs int
