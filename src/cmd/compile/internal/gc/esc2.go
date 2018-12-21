@@ -791,18 +791,17 @@ func (e *EscState) teeHole(ks ...EscHole) EscHole {
 		return ks[0]
 	}
 
-	// Given holes l1 <- _, l2 <- **_, l3 <- *_, ..., create a new
-	// temporary location ltmp, wire it into place, and return a
-	// hole for ltmp <- _.
+	// Given holes "l1 = _", "l2 = **_", "l3 = *_", ..., create a
+	// new temporary location ltmp, wire it into place, and return
+	// a hole for "ltmp = _".
 	loc := e.newLoc(nil)
 	for _, k := range ks {
 		if k.derefs < 0 {
-			// N.B., "p <- &q" and "p <- &tmp; tmp <- q"
-			// are not semantically equivalent. If we have
-			// holes like "l1 <- _, l2 <- &_", then we'd
-			// need to wire as "l1 <- *ltmp, l2 <- ltmp"
-			// and return "ltmp <- &_".
-			// TODO(mdempsky): What if that thing I just said.
+			// N.B., "p = &q" and "p = &tmp; tmp = q" are
+			// not semantically equivalent. To combine
+			// holes like "l1 = _" and "l2 = &_", we'd
+			// need to wire them as "l1 = *ltmp" and "l2 =
+			// ltmp" and return "ltmp = &_" instead.
 			Fatalf("teeHole: negative derefs")
 		}
 		e.flow(k, loc)
