@@ -115,7 +115,7 @@ func (e *EscState) stmt(n *Node) {
 	default:
 		Fatalf("unexpected stmt: %v", n)
 
-	case OEMPTY, ODCLCONST, ODCLTYPE, OFALL:
+	case ODCLCONST, ODCLTYPE, OEMPTY, OFALL, OINLMARK:
 		// nop
 
 	case OBREAK, OCONTINUE, OGOTO:
