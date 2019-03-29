@@ -582,9 +582,6 @@ func (e *EscState) assignHeap(src *Node, why string, where *Node) {
 }
 
 func (e *EscState) call(ks []EscHole, call, where *Node) {
-	// TODO(mdempsky): This is still a mess. It should get better
-	// once we have early OAS2FUNC though (#29197).
-
 	var fn, recv *Node
 	args := call.List.Slice()
 	switch call.Op {
@@ -603,9 +600,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 	case OLEN, OCAP, OREAL, OIMAG, OCLOSE, OPANIC:
 		args = []*Node{call.Left}
 	case OCOMPLEX, OCOPY:
-		if call.Left != nil {
-			args = []*Node{call.Left, call.Right}
-		}
+		args = []*Node{call.Left, call.Right}
 	default:
 		Fatalf("unexpected call op: %v", call.Op)
 	}
@@ -664,10 +659,10 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 		}
 
 		if r := fntype.Recv(); r != nil {
-			recvK = e.tagHole(ks, !direct, r, where == nil)
+			recvK = e.tagHole(ks, direct, r, where == nil)
 		}
 		for _, param := range fntype.Params().FieldSlice() {
-			paramKs = append(paramKs, e.tagHole(ks, !direct, param, where == nil))
+			paramKs = append(paramKs, e.tagHole(ks, direct, param, where == nil))
 		}
 	} else {
 		// Handle escape analysis for builtins.
@@ -715,13 +710,11 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 		}
 	}
 
+	// TODO(mdempsky): Remove after early ddd-ification.
 	if fntype != nil && fntype.IsVariadic() && !call.IsDDD() {
 		vi := fntype.NumParams() - 1
 
 		nva := call.List.Len()
-		if nva == 1 && call.List.First().Type.IsFuncArgStruct() {
-			nva = call.List.First().Type.NumFields()
-		}
 		nva -= vi
 
 		dddK := e.spill(paramKs[vi], call)
@@ -731,11 +724,9 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 		}
 
 		if nva == 0 {
-			call.Esc = 42
+			call.Esc = 42 // flag for EscState.cleanup
 		}
 	}
-
-	// TODO(mdempsky): Handle implicit conversions.
 
 	if call.Op == OCALLFUNC {
 		k := e.discardHole()
@@ -758,25 +749,21 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 		e.value(recvK, recv)
 	}
 
-	if len(paramKs) > 1 && call.List.Len() == 1 {
-		e.call(paramKs, call.List.First(), nil)
-	} else {
-		for i, arg := range args {
-			// For arguments to go:uintptrescapes, peel
-			// away an unsafe.Pointer->uintptr conversion,
-			// if present.
-			if direct && arg.Op == OCONVNOP && arg.Type.Etype == TUINTPTR && arg.Left.Type.Etype == TUNSAFEPTR {
-				x := i
-				if fntype.IsVariadic() && x >= fntype.NumParams() {
-					x = fntype.NumParams() - 1
-				}
-				if fntype.Params().Field(x).Note == uintptrEscapesTag {
-					arg = arg.Left
-				}
+	for i, arg := range args {
+		// For arguments to go:uintptrescapes, peel
+		// away an unsafe.Pointer->uintptr conversion,
+		// if present.
+		if direct && arg.Op == OCONVNOP && arg.Type.Etype == TUINTPTR && arg.Left.Type.Etype == TUNSAFEPTR {
+			x := i
+			if fntype.IsVariadic() && x >= fntype.NumParams() {
+				x = fntype.NumParams() - 1
 			}
-
-			e.value(paramKs[i], arg)
+			if fntype.Params().Field(x).Note == uintptrEscapesTag {
+				arg = arg.Left
+			}
 		}
+
+		e.value(paramKs[i], arg)
 	}
 }
 
@@ -807,13 +794,13 @@ func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	return loc.asHole()
 }
 
-func (e *EscState) tagHole(ks []EscHole, indirect bool, param *types.Field, transient bool) EscHole {
+func (e *EscState) tagHole(ks []EscHole, direct bool, param *types.Field, transient bool) EscHole {
 	tag := param.Note
 	if debugLevel(2) {
-		fmt.Printf("tagHole: [%v] = %q, indirect=%v\n", ks, tag, indirect)
+		fmt.Printf("tagHole: [%v] = %q, direct=%v\n", ks, tag, direct)
 	}
 
-	if indirect {
+	if !direct {
 		// TODO(mdempsky): Perhaps overly conservative. I
 		// don't think we need to guarantee that f(uintptr(p))
 		// works if f is an indirect call to a uintptrescapes
@@ -1268,11 +1255,7 @@ func dddLen(n *Node) int {
 		return 0
 	}
 
-	nargs := n.List.Len()
-	if nargs == 1 && n.List.First().Type.IsFuncArgStruct() {
-		nargs = n.List.First().Type.NumFields()
-	}
-	return nargs - (n.Left.Type.NumParams() - 1)
+	return n.List.Len() - (n.Left.Type.NumParams() - 1)
 }
 
 func (e *EscState) cleanup(all []*Node) {
