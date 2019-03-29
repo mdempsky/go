@@ -32,14 +32,14 @@ var (
 	ModInit func()
 
 	// module hooks; nil if module use is disabled
-	ModBinDir            func() string                                       // return effective bin directory
-	ModLookup            func(path string) (dir, realPath string, err error) // lookup effective meaning of import
-	ModPackageModuleInfo func(path string) *modinfo.ModulePublic             // return module info for Package struct
-	ModImportPaths       func(args []string) []*search.Match                 // expand import paths
-	ModPackageBuildInfo  func(main string, deps []string) string             // return module info to embed in binary
-	ModInfoProg          func(info string) []byte                            // wrap module info in .go code for binary
-	ModImportFromFiles   func([]string)                                      // update go.mod to add modules for imports in these files
-	ModDirImportPath     func(string) string                                 // return effective import path for directory
+	ModBinDir            func() string                                                                            // return effective bin directory
+	ModLookup            func(parentPath string, parentIsStd bool, path string) (dir, realPath string, err error) // lookup effective meaning of import
+	ModPackageModuleInfo func(path string) *modinfo.ModulePublic                                                  // return module info for Package struct
+	ModImportPaths       func(args []string) []*search.Match                                                      // expand import paths
+	ModPackageBuildInfo  func(main string, deps []string) string                                                  // return module info to embed in binary
+	ModInfoProg          func(info string) []byte                                                                 // wrap module info in .go code for binary
+	ModImportFromFiles   func([]string)                                                                           // update go.mod to add modules for imports in these files
+	ModDirImportPath     func(string) string                                                                      // return effective import path for directory
 )
 
 var IgnoreImports bool // control whether we ignore imports in packages
@@ -483,8 +483,10 @@ func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPo
 	}
 
 	parentPath := ""
+	parentIsStd := false
 	if parent != nil {
 		parentPath = parent.ImportPath
+		parentIsStd = parent.Standard
 	}
 
 	// Determine canonical identifier for this package.
@@ -501,7 +503,7 @@ func LoadImport(path, srcDir string, parent *Package, stk *ImportStack, importPo
 		importPath = dirToImportPath(filepath.Join(srcDir, path))
 	} else if cfg.ModulesEnabled {
 		var p string
-		modDir, p, modErr = ModLookup(path)
+		modDir, p, modErr = ModLookup(parentPath, parentIsStd, path)
 		if modErr == nil {
 			importPath = p
 		}
@@ -641,7 +643,13 @@ func isDir(path string) bool {
 // Go 1.11 module legacy conversion (golang.org/issue/25069).
 func ResolveImportPath(parent *Package, path string) (found string) {
 	if cfg.ModulesEnabled {
-		if _, p, e := ModLookup(path); e == nil {
+		parentPath := ""
+		parentIsStd := false
+		if parent != nil {
+			parentPath = parent.ImportPath
+			parentIsStd = parent.Standard
+		}
+		if _, p, e := ModLookup(parentPath, parentIsStd, path); e == nil {
 			return p
 		}
 		return path
@@ -794,7 +802,7 @@ func findVersionElement(path string) (i, j int) {
 	j = len(path)
 	for i = len(path) - 1; i >= 0; i-- {
 		if path[i] == '/' {
-			if isVersionElement(path[i:j]) {
+			if isVersionElement(path[i+1 : j]) {
 				return i, j
 			}
 			j = i
@@ -806,10 +814,10 @@ func findVersionElement(path string) (i, j int) {
 // isVersionElement reports whether s is a well-formed path version element:
 // v2, v3, v10, etc, but not v0, v05, v1.
 func isVersionElement(s string) bool {
-	if len(s) < 3 || s[0] != '/' || s[1] != 'v' || s[2] == '0' || s[2] == '1' && len(s) == 3 {
+	if len(s) < 2 || s[0] != 'v' || s[1] == '0' || s[1] == '1' && len(s) == 2 {
 		return false
 	}
-	for i := 2; i < len(s); i++ {
+	for i := 1; i < len(s); i++ {
 		if s[i] < '0' || '9' < s[i] {
 			return false
 		}
@@ -958,6 +966,13 @@ func disallowInternal(srcDir string, importer *Package, importerPath string, p *
 
 	// We can't check standard packages with gccgo.
 	if cfg.BuildContext.Compiler == "gccgo" && p.Standard {
+		return p
+	}
+
+	// The sort package depends on internal/reflectlite, but during bootstrap
+	// the path rewriting causes the normal internal checks to fail.
+	// Instead, just ignore the internal rules during bootstrap.
+	if p.Standard && strings.HasPrefix(importerPath, "bootstrap/") {
 		return p
 	}
 
@@ -1178,6 +1193,26 @@ var cgoSyscallExclude = map[string]bool{
 
 var foldPath = make(map[string]string)
 
+// DefaultExecName returns the default executable name
+// for a package with the import path importPath.
+//
+// The default executable name is the last element of the import path.
+// In module-aware mode, an additional rule is used on import paths
+// consisting of two or more path elements. If the last element is
+// a vN path element specifying the major version, then the
+// second last element of the import path is used instead.
+func DefaultExecName(importPath string) string {
+	_, elem := pathpkg.Split(importPath)
+	if cfg.ModulesEnabled {
+		// If this is example.com/mycmd/v2, it's more useful to
+		// install it as mycmd than as v2. See golang.org/issue/24667.
+		if elem != importPath && isVersionElement(elem) {
+			_, elem = pathpkg.Split(pathpkg.Dir(importPath))
+		}
+	}
+	return elem
+}
+
 // load populates p using information from bp, err, which should
 // be the result of calling build.Context.Import.
 func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
@@ -1218,38 +1253,7 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 			p.Error = &PackageError{Err: e}
 			return
 		}
-		_, elem := filepath.Split(p.Dir)
-		if cfg.ModulesEnabled {
-			// NOTE(rsc): Using p.ImportPath instead of p.Dir
-			// makes sure we install a package in the root of a
-			// cached module directory as that package name
-			// not name@v1.2.3.
-			// Using p.ImportPath instead of p.Dir
-			// is probably correct all the time,
-			// even for non-module-enabled code,
-			// but I'm not brave enough to change the
-			// non-module behavior this late in the
-			// release cycle. Maybe for Go 1.12.
-			// See golang.org/issue/26869.
-			_, elem = pathpkg.Split(p.ImportPath)
-
-			// If this is example.com/mycmd/v2, it's more useful to install it as mycmd than as v2.
-			// See golang.org/issue/24667.
-			isVersion := func(v string) bool {
-				if len(v) < 2 || v[0] != 'v' || v[1] < '1' || '9' < v[1] {
-					return false
-				}
-				for i := 2; i < len(v); i++ {
-					if c := v[i]; c < '0' || '9' < c {
-						return false
-					}
-				}
-				return true
-			}
-			if isVersion(elem) {
-				_, elem = pathpkg.Split(pathpkg.Dir(p.ImportPath))
-			}
-		}
+		elem := DefaultExecName(p.ImportPath)
 		full := cfg.BuildContext.GOOS + "_" + cfg.BuildContext.GOARCH + "/" + elem
 		if cfg.BuildContext.GOOS != base.ToolGOOS || cfg.BuildContext.GOARCH != base.ToolGOARCH {
 			// Install cross-compiled binaries to subdirectories of bin.
@@ -1401,16 +1405,6 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 			continue
 		}
 		p1 := LoadImport(path, p.Dir, p, stk, p.Internal.Build.ImportPos[path], ResolveImport)
-		if p.Standard && p.Error == nil && !p1.Standard && p1.Error == nil {
-			p.Error = &PackageError{
-				ImportStack: stk.Copy(),
-				Err:         fmt.Sprintf("non-standard import %q in standard package %q", path, p.ImportPath),
-			}
-			pos := p.Internal.Build.ImportPos[path]
-			if len(pos) > 0 {
-				p.Error.Pos = pos[0].String()
-			}
-		}
 
 		path = p1.ImportPath
 		importPaths[i] = path
@@ -1424,41 +1418,7 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 		}
 	}
 	p.Internal.Imports = imports
-
-	deps := make(map[string]*Package)
-	var q []*Package
-	q = append(q, imports...)
-	for i := 0; i < len(q); i++ {
-		p1 := q[i]
-		path := p1.ImportPath
-		// The same import path could produce an error or not,
-		// depending on what tries to import it.
-		// Prefer to record entries with errors, so we can report them.
-		p0 := deps[path]
-		if p0 == nil || p1.Error != nil && (p0.Error == nil || len(p0.Error.ImportStack) > len(p1.Error.ImportStack)) {
-			deps[path] = p1
-			for _, p2 := range p1.Internal.Imports {
-				if deps[p2.ImportPath] != p2 {
-					q = append(q, p2)
-				}
-			}
-		}
-	}
-
-	p.Deps = make([]string, 0, len(deps))
-	for dep := range deps {
-		p.Deps = append(p.Deps, dep)
-	}
-	sort.Strings(p.Deps)
-	for _, dep := range p.Deps {
-		p1 := deps[dep]
-		if p1 == nil {
-			panic("impossible: missing entry in package cache for " + dep + " imported by " + p.ImportPath)
-		}
-		if p1.Error != nil {
-			p.DepsErrors = append(p.DepsErrors, p1.Error)
-		}
-	}
+	p.collectDeps()
 
 	// unsafe is a fake package.
 	if p.Standard && (p.ImportPath == "unsafe" || cfg.BuildContext.Compiler == "gccgo") {
@@ -1524,6 +1484,48 @@ func (p *Package) load(stk *ImportStack, bp *build.Package, err error) {
 		p.Module = ModPackageModuleInfo(mainPath)
 		if p.Name == "main" {
 			p.Internal.BuildInfo = ModPackageBuildInfo(mainPath, p.Deps)
+		}
+	}
+}
+
+// collectDeps populates p.Deps and p.DepsErrors by iterating over
+// p.Internal.Imports.
+//
+// TODO(jayconrod): collectDeps iterates over transitive imports for every
+// package. We should only need to visit direct imports.
+func (p *Package) collectDeps() {
+	deps := make(map[string]*Package)
+	var q []*Package
+	q = append(q, p.Internal.Imports...)
+	for i := 0; i < len(q); i++ {
+		p1 := q[i]
+		path := p1.ImportPath
+		// The same import path could produce an error or not,
+		// depending on what tries to import it.
+		// Prefer to record entries with errors, so we can report them.
+		p0 := deps[path]
+		if p0 == nil || p1.Error != nil && (p0.Error == nil || len(p0.Error.ImportStack) > len(p1.Error.ImportStack)) {
+			deps[path] = p1
+			for _, p2 := range p1.Internal.Imports {
+				if deps[p2.ImportPath] != p2 {
+					q = append(q, p2)
+				}
+			}
+		}
+	}
+
+	p.Deps = make([]string, 0, len(deps))
+	for dep := range deps {
+		p.Deps = append(p.Deps, dep)
+	}
+	sort.Strings(p.Deps)
+	for _, dep := range p.Deps {
+		p1 := deps[dep]
+		if p1 == nil {
+			panic("impossible: missing entry in package cache for " + dep + " imported by " + p.ImportPath)
+		}
+		if p1.Error != nil {
+			p.DepsErrors = append(p.DepsErrors, p1.Error)
 		}
 	}
 }

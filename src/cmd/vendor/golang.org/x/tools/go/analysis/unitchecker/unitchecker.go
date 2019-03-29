@@ -182,7 +182,7 @@ func readConfig(filename string) (*Config, error) {
 }
 
 var importerForCompiler = func(_ *token.FileSet, compiler string, lookup importer.Lookup) types.Importer {
-	// broken legacy implementation (github.com/golang/go/issues/28995)
+	// broken legacy implementation (https://golang.org/issue/28995)
 	return importer.For(compiler, lookup)
 }
 
@@ -329,6 +329,7 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
 				OtherFiles:        cfg.NonGoFiles,
 				Pkg:               pkg,
 				TypesInfo:         info,
+				TypesSizes:        tc.Sizes,
 				ResultOf:          inputs,
 				Report:            func(d analysis.Diagnostic) { act.diagnostics = append(act.diagnostics, d) },
 				ImportObjectFact:  facts.ImportObjectFact,

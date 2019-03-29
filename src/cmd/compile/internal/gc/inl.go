@@ -589,24 +589,13 @@ func inlnode(n *Node, maxCost int32) *Node {
 	}
 
 	inlnodelist(n.List, maxCost)
-	switch n.Op {
-	case OBLOCK:
+	if n.Op == OBLOCK {
 		for _, n2 := range n.List.Slice() {
 			if n2.Op == OINLCALL {
 				inlconv2stmt(n2)
 			}
 		}
-
-	case ORETURN, OCALLFUNC, OCALLMETH, OCALLINTER, OAPPEND, OCOMPLEX:
-		// if we just replaced arg in f(arg()) or return arg with an inlined call
-		// and arg returns multiple values, glue as list
-		if n.List.Len() == 1 && n.List.First().Op == OINLCALL && n.List.First().Rlist.Len() > 1 {
-			n.List.Set(inlconv2list(n.List.First()))
-			break
-		}
-		fallthrough
-
-	default:
+	} else {
 		s := n.List.Slice()
 		for i1, n1 := range s {
 			if n1 != nil && n1.Op == OINLCALL {
@@ -1016,9 +1005,6 @@ func mkinlcall(n, fn *Node, maxCost int32) *Node {
 		// to pass as a slice.
 
 		numvals := n.List.Len()
-		if numvals == 1 && n.List.First().Type.IsFuncArgStruct() {
-			numvals = n.List.First().Type.NumFields()
-		}
 
 		x := as.List.Len()
 		for as.List.Len() < numvals {
@@ -1062,6 +1048,15 @@ func mkinlcall(n, fn *Node, maxCost int32) *Node {
 		parent = b.InliningIndex()
 	}
 	newIndex := Ctxt.InlTree.Add(parent, n.Pos, fn.Sym.Linksym())
+
+	// Add a inline mark just before the inlined body.
+	// This mark is inline in the code so that it's a reasonable spot
+	// to put a breakpoint. Not sure if that's really necessary or not
+	// (in which case it could go at the end of the function instead).
+	inlMark := nod(OINLMARK, nil, nil)
+	inlMark.Pos = n.Pos
+	inlMark.Xoffset = int64(newIndex)
+	ninit.Append(inlMark)
 
 	if genDwarfInline > 0 {
 		if !fn.Sym.Linksym().WasInlined() {

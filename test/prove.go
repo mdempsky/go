@@ -269,7 +269,7 @@ func f11b(a []int, i int) {
 
 func f11c(a []int, i int) {
 	useSlice(a[:i])
-	useSlice(a[:i]) // ERROR "Proved Geq64$" "Proved IsSliceInBounds$"
+	useSlice(a[:i]) // ERROR "Proved IsSliceInBounds$"
 }
 
 func f11d(a []int, i int) {
@@ -469,7 +469,7 @@ func f17(b []int) {
 		// using the derived relation between len and cap.
 		// This depends on finding the contradiction, since we
 		// don't query this condition directly.
-		useSlice(b[:i]) // ERROR "Proved Geq64$" "Proved IsSliceInBounds$"
+		useSlice(b[:i]) // ERROR "Proved IsSliceInBounds$"
 	}
 }
 
@@ -486,6 +486,20 @@ func f18(b []int, x int, y uint) {
 	if int(y) > len(b) { // ERROR "Disproved Greater64$"
 		return
 	}
+}
+
+func f19() (e int64, err error) {
+	// Issue 29502: slice[:0] is incorrectly disproved.
+	var stack []int64
+	stack = append(stack, 123)
+	if len(stack) > 1 {
+		panic("too many elements")
+	}
+	last := len(stack) - 1
+	e = stack[last]
+	// Buggy compiler prints "Disproved Geq64" for the next line.
+	stack = stack[:last] // ERROR "Proved IsSliceInBounds"
+	return e, nil
 }
 
 func sm1(b []int, x int) {

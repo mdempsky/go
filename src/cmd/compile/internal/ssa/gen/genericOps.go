@@ -369,6 +369,14 @@ var genericOps = []opData{
 	// arch-dependent), and is not a safe-point.
 	{name: "WB", argLength: 3, typ: "Mem", aux: "Sym", symEffect: "None"}, // arg0=destptr, arg1=srcptr, arg2=mem, aux=runtime.gcWriteBarrier
 
+	// PanicBounds and PanicExtend generate a runtime panic.
+	// Their arguments provide index values to use in panic messages.
+	// Both PanicBounds and PanicExtend have an AuxInt value from the BoundsKind type (in ../op.go).
+	// PanicBounds' index is int sized.
+	// PanicExtend's index is int64 sized. (PanicExtend is only used on 32-bit archs.)
+	{name: "PanicBounds", argLength: 3, aux: "Int64", typ: "Mem"}, // arg0=idx, arg1=len, arg2=mem, returns memory.
+	{name: "PanicExtend", argLength: 4, aux: "Int64", typ: "Mem"}, // arg0=idxHi, arg1=idxLo, arg2=len, arg3=mem, returns memory.
+
 	// Function calls. Arguments to the call have already been written to the stack.
 	// Return values appear on the stack. The method receiver, if any, is treated
 	// as a phantom first argument.
@@ -479,6 +487,10 @@ var genericOps = []opData{
 	// TODO: what's the difference betweeen VarLive and KeepAlive?
 	{name: "VarLive", argLength: 1, aux: "Sym", symEffect: "Read", zeroWidth: true}, // aux is a *gc.Node of a variable that must be kept live.  arg0=mem, returns mem
 	{name: "KeepAlive", argLength: 2, typ: "Mem", zeroWidth: true},                  // arg[0] is a value that must be kept alive until this mark.  arg[1]=mem, returns mem
+
+	// InlMark marks the start of an inlined function body. Its AuxInt field
+	// distinguishes which entry in the local inline tree it is marking.
+	{name: "InlMark", argLength: 1, aux: "Int32", typ: "Void"}, // arg[0]=mem, returns void.
 
 	// Ops for breaking 64-bit operations on 32-bit architectures
 	{name: "Int64Make", argLength: 2, typ: "UInt64"}, // arg0=hi, arg1=lo

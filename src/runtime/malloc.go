@@ -858,7 +858,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	dataSize := size
 	c := gomcache()
 	var x unsafe.Pointer
-	noscan := typ == nil || typ.kind&kindNoPointers != 0
+	noscan := typ == nil || typ.ptrdata == 0
 	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
 			// Tiny allocator.
@@ -1012,7 +1012,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	}
 
 	if rate := MemProfileRate; rate > 0 {
-		if size < uintptr(rate) && int32(size) < c.next_sample {
+		if rate != 1 && int32(size) < c.next_sample {
 			c.next_sample -= int32(size)
 		} else {
 			mp := acquirem()
@@ -1070,6 +1070,11 @@ func newobject(typ *_type) unsafe.Pointer {
 
 //go:linkname reflect_unsafe_New reflect.unsafe_New
 func reflect_unsafe_New(typ *_type) unsafe.Pointer {
+	return mallocgc(typ.size, typ, true)
+}
+
+//go:linkname reflectlite_unsafe_New internal/reflectlite.unsafe_New
+func reflectlite_unsafe_New(typ *_type) unsafe.Pointer {
 	return mallocgc(typ.size, typ, true)
 }
 
@@ -1167,6 +1172,15 @@ var globalAlloc struct {
 	persistentAlloc
 }
 
+// persistentChunkSize is the number of bytes we allocate when we grow
+// a persistentAlloc.
+const persistentChunkSize = 256 << 10
+
+// persistentChunks is a list of all the persistent chunks we have
+// allocated. The list is maintained through the first word in the
+// persistent chunk. This is updated atomically.
+var persistentChunks *notInHeap
+
 // Wrapper around sysAlloc that can allocate small chunks.
 // There is no associated free operation.
 // Intended for things like function/type/debug-related persistent data.
@@ -1187,7 +1201,6 @@ func persistentalloc(size, align uintptr, sysStat *uint64) unsafe.Pointer {
 //go:systemstack
 func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 	const (
-		chunk    = 256 << 10
 		maxBlock = 64 << 10 // VM reservation granularity is 64K on windows
 	)
 
@@ -1218,15 +1231,24 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 		persistent = &globalAlloc.persistentAlloc
 	}
 	persistent.off = round(persistent.off, align)
-	if persistent.off+size > chunk || persistent.base == nil {
-		persistent.base = (*notInHeap)(sysAlloc(chunk, &memstats.other_sys))
+	if persistent.off+size > persistentChunkSize || persistent.base == nil {
+		persistent.base = (*notInHeap)(sysAlloc(persistentChunkSize, &memstats.other_sys))
 		if persistent.base == nil {
 			if persistent == &globalAlloc.persistentAlloc {
 				unlock(&globalAlloc.mutex)
 			}
 			throw("runtime: cannot allocate memory")
 		}
-		persistent.off = 0
+
+		// Add the new chunk to the persistentChunks list.
+		for {
+			chunks := uintptr(unsafe.Pointer(persistentChunks))
+			*(*uintptr)(unsafe.Pointer(persistent.base)) = chunks
+			if atomic.Casuintptr((*uintptr)(unsafe.Pointer(&persistentChunks)), chunks, uintptr(unsafe.Pointer(persistent.base))) {
+				break
+			}
+		}
+		persistent.off = round(sys.PtrSize, align)
 	}
 	p := persistent.base.add(persistent.off)
 	persistent.off += size
@@ -1240,6 +1262,21 @@ func persistentalloc1(size, align uintptr, sysStat *uint64) *notInHeap {
 		mSysStatDec(&memstats.other_sys, size)
 	}
 	return p
+}
+
+// inPersistentAlloc reports whether p points to memory allocated by
+// persistentalloc. This must be nosplit because it is called by the
+// cgo checker code, which is called by the write barrier code.
+//go:nosplit
+func inPersistentAlloc(p uintptr) bool {
+	chunk := atomic.Loaduintptr((*uintptr)(unsafe.Pointer(&persistentChunks)))
+	for chunk != 0 {
+		if p >= chunk && p < chunk+persistentChunkSize {
+			return true
+		}
+		chunk = *(*uintptr)(unsafe.Pointer(chunk))
+	}
+	return false
 }
 
 // linearAlloc is a simple linear allocator that pre-reserves a region

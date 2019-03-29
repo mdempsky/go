@@ -153,6 +153,7 @@ func (s *ssafn) AllocFrame(f *ssa.Func) {
 	sort.Sort(byStackVar(fn.Dcl))
 
 	// Reassign stack offsets of the locals that are used.
+	lastHasPtr := false
 	for i, n := range fn.Dcl {
 		if n.Op != ONAME || n.Class() != PAUTO {
 			continue
@@ -167,10 +168,20 @@ func (s *ssafn) AllocFrame(f *ssa.Func) {
 		if w >= thearch.MAXWIDTH || w < 0 {
 			Fatalf("bad width")
 		}
+		if w == 0 && lastHasPtr {
+			// Pad between a pointer-containing object and a zero-sized object.
+			// This prevents a pointer to the zero-sized object from being interpreted
+			// as a pointer to the pointer-containing object (and causing it
+			// to be scanned when it shouldn't be). See issue 24993.
+			w = 1
+		}
 		s.stksize += w
 		s.stksize = Rnd(s.stksize, int64(n.Type.Align))
 		if types.Haspointers(n.Type) {
 			s.stkptrsize = s.stksize
+			lastHasPtr = true
+		} else {
+			lastHasPtr = false
 		}
 		if thearch.LinkArch.InFamily(sys.MIPS, sys.MIPS64, sys.ARM, sys.ARM64, sys.PPC64, sys.S390X) {
 			s.stksize = Rnd(s.stksize, int64(Widthptr))
@@ -232,6 +243,14 @@ func compile(fn *Node) {
 	// From this point, there should be no uses of Curfn. Enforce that.
 	Curfn = nil
 
+	if fn.funcname() == "_" {
+		// We don't need to generate code for this function, just report errors in its body.
+		// At this point we've generated any errors needed.
+		// (Beyond here we generate only non-spec errors, like "stack frame too large".)
+		// See issue 29870.
+		return
+	}
+
 	// Set up the function's LSym early to avoid data races with the assemblers.
 	fn.Func.initLSym(true)
 
@@ -239,17 +258,15 @@ func compile(fn *Node) {
 	// be types of stack objects. We need to do this here
 	// because symbols must be allocated before the parallel
 	// phase of the compiler.
-	if fn.Func.lsym != nil { // not func _(){}
-		for _, n := range fn.Func.Dcl {
-			switch n.Class() {
-			case PPARAM, PPARAMOUT, PAUTO:
-				if livenessShouldTrack(n) && n.Addrtaken() {
-					dtypesym(n.Type)
-					// Also make sure we allocate a linker symbol
-					// for the stack object data, for the same reason.
-					if fn.Func.lsym.Func.StackObjects == nil {
-						fn.Func.lsym.Func.StackObjects = lookup(fmt.Sprintf("%s.stkobj", fn.funcname())).Linksym()
-					}
+	for _, n := range fn.Func.Dcl {
+		switch n.Class() {
+		case PPARAM, PPARAMOUT, PAUTO:
+			if livenessShouldTrack(n) && n.Addrtaken() {
+				dtypesym(n.Type)
+				// Also make sure we allocate a linker symbol
+				// for the stack object data, for the same reason.
+				if fn.Func.lsym.Func.StackObjects == nil {
+					fn.Func.lsym.Func.StackObjects = lookup(fmt.Sprintf("%s.stkobj", fn.funcname())).Linksym()
 				}
 			}
 		}
@@ -536,11 +553,9 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, automDecls []*Node) ([]*Node, []
 		decls, vars, selected = createSimpleVars(automDecls)
 	}
 
-	var dcl []*Node
+	dcl := automDecls
 	if fnsym.WasInlined() {
 		dcl = preInliningDcls(fnsym)
-	} else {
-		dcl = automDecls
 	}
 
 	// If optimization is enabled, the list above will typically be
@@ -578,8 +593,22 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, automDecls []*Node) ([]*Node, []
 		typename := dwarf.InfoPrefix + typesymname(n.Type)
 		decls = append(decls, n)
 		abbrev := dwarf.DW_ABRV_AUTO_LOCLIST
+		isReturnValue := (n.Class() == PPARAMOUT)
 		if n.Class() == PPARAM || n.Class() == PPARAMOUT {
 			abbrev = dwarf.DW_ABRV_PARAM_LOCLIST
+		} else if n.Class() == PAUTOHEAP {
+			// If dcl in question has been promoted to heap, do a bit
+			// of extra work to recover original class (auto or param);
+			// see issue 30908. This insures that we get the proper
+			// signature in the abstract function DIE, but leaves a
+			// misleading location for the param (we want pointer-to-heap
+			// and not stack).
+			// TODO(thanm): generate a better location expression
+			stackcopy := n.Name.Param.Stackcopy
+			if stackcopy != nil && (stackcopy.Class() == PPARAM || stackcopy.Class() == PPARAMOUT) {
+				abbrev = dwarf.DW_ABRV_PARAM_LOCLIST
+				isReturnValue = (stackcopy.Class() == PPARAMOUT)
+			}
 		}
 		inlIndex := 0
 		if genDwarfInline > 1 {
@@ -593,7 +622,7 @@ func createDwarfVars(fnsym *obj.LSym, fn *Func, automDecls []*Node) ([]*Node, []
 		declpos := Ctxt.InnermostPos(n.Pos)
 		vars = append(vars, &dwarf.Var{
 			Name:          n.Sym.Name,
-			IsReturnValue: n.Class() == PPARAMOUT,
+			IsReturnValue: isReturnValue,
 			Abbrev:        abbrev,
 			StackOffset:   int32(n.Xoffset),
 			Type:          Ctxt.Lookup(typename),

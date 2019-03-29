@@ -82,11 +82,11 @@ var (
 	raceprocctx0 uintptr
 )
 
-//go:linkname runtime_init runtime.init
-func runtime_init()
+//go:linkname runtime_inittask runtime..inittask
+var runtime_inittask initTask
 
-//go:linkname main_init main.init
-func main_init()
+//go:linkname main_inittask main..inittask
+var main_inittask initTask
 
 // main_init_done is a signal used by cgocallbackg that initialization
 // has been completed. It is made before _cgo_notify_runtime_init_done,
@@ -144,7 +144,7 @@ func main() {
 		throw("runtime.main not on m0")
 	}
 
-	runtime_init() // must be before defer
+	doInit(&runtime_inittask) // must be before defer
 	if nanotime() == 0 {
 		throw("nanotime returning zero")
 	}
@@ -184,8 +184,8 @@ func main() {
 		cgocall(_cgo_notify_runtime_init_done, nil)
 	}
 
-	fn := main_init // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
-	fn()
+	doInit(&main_inittask)
+
 	close(main_init_done)
 
 	needUnlock = false
@@ -196,7 +196,7 @@ func main() {
 		// has a main, but it is not executed.
 		return
 	}
-	fn = main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
+	fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
 	fn()
 	if raceenabled {
 		racefini()
@@ -3303,9 +3303,11 @@ func newproc1(fn *funcval, argp *uint8, narg int32, callergp *g, callerpc uintpt
 		if writeBarrier.needed && !_g_.m.curg.gcscandone {
 			f := findfunc(fn.fn)
 			stkmap := (*stackmap)(funcdata(f, _FUNCDATA_ArgsPointerMaps))
-			// We're in the prologue, so it's always stack map index 0.
-			bv := stackmapdata(stkmap, 0)
-			bulkBarrierBitmap(spArg, spArg, uintptr(narg), 0, bv.bytedata)
+			if stkmap.nbit > 0 {
+				// We're in the prologue, so it's always stack map index 0.
+				bv := stackmapdata(stkmap, 0)
+				bulkBarrierBitmap(spArg, spArg, uintptr(bv.n)*sys.PtrSize, 0, bv.bytedata)
+			}
 		}
 	}
 
@@ -3756,7 +3758,7 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 		// Normal traceback is impossible or has failed.
 		// See if it falls into several common cases.
 		n = 0
-		if (GOOS == "windows" || GOOS == "solaris" || GOOS == "darwin") && mp.libcallg != 0 && mp.libcallpc != 0 && mp.libcallsp != 0 {
+		if (GOOS == "windows" || GOOS == "solaris" || GOOS == "darwin" || GOOS == "aix") && mp.libcallg != 0 && mp.libcallpc != 0 && mp.libcallsp != 0 {
 			// Libcall, i.e. runtime syscall on windows.
 			// Collect Go stack that leads to the call.
 			n = gentraceback(mp.libcallpc, mp.libcallsp, 0, mp.libcallg.ptr(), 0, &stk[0], len(stk), nil, nil, 0)
@@ -5182,4 +5184,36 @@ func gcd(a, b uint32) uint32 {
 		a, b = b, a%b
 	}
 	return a
+}
+
+// An initTask represents the set of initializations that need to be done for a package.
+type initTask struct {
+	// TODO: pack the first 3 fields more tightly?
+	state uintptr // 0 = uninitialized, 1 = in progress, 2 = done
+	ndeps uintptr
+	nfns  uintptr
+	// followed by ndeps instances of an *initTask, one per package depended on
+	// followed by nfns pcs, one per init function to run
+}
+
+func doInit(t *initTask) {
+	switch t.state {
+	case 2: // fully initialized
+		return
+	case 1: // initialization in progress
+		throw("recursive call during initialization - linker skew")
+	default: // not initialized yet
+		t.state = 1 // initialization in progress
+		for i := uintptr(0); i < t.ndeps; i++ {
+			p := add(unsafe.Pointer(t), (3+i)*sys.PtrSize)
+			t2 := *(**initTask)(p)
+			doInit(t2)
+		}
+		for i := uintptr(0); i < t.nfns; i++ {
+			p := add(unsafe.Pointer(t), (3+t.ndeps+i)*sys.PtrSize)
+			f := *(*func())(unsafe.Pointer(&p))
+			f()
+		}
+		t.state = 2 // initialization done
+	}
 }

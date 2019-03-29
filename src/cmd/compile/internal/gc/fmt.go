@@ -174,6 +174,7 @@ var goopnames = []string{
 	OGT:       ">",
 	OIF:       "if",
 	OIMAG:     "imag",
+	OINLMARK:  "inlmark",
 	ODEREF:    "*",
 	OLEN:      "len",
 	OLE:       "<=",
@@ -942,6 +943,9 @@ func (n *Node) stmtfmt(s fmt.State, mode fmtMode) {
 	case ORETJMP:
 		mode.Fprintf(s, "retjmp %v", n.Sym)
 
+	case OINLMARK:
+		mode.Fprintf(s, "inlmark %d", n.Xoffset)
+
 	case OGO:
 		mode.Fprintf(s, "go %v", n.Left)
 
@@ -1400,14 +1404,11 @@ func (n *Node) exprfmt(s fmt.State, prec int, mode fmtMode) {
 		}
 		mode.Fprintf(s, "sliceheader{%v,%v,%v}", n.Left, n.List.First(), n.List.Second())
 
-	case OCOPY:
-		mode.Fprintf(s, "%#v(%v, %v)", n.Op, n.Left, n.Right)
-
-	case OCOMPLEX:
-		if n.List.Len() == 1 {
-			mode.Fprintf(s, "%#v(%v)", n.Op, n.List.First())
-		} else {
+	case OCOMPLEX, OCOPY:
+		if n.Left != nil {
 			mode.Fprintf(s, "%#v(%v, %v)", n.Op, n.Left, n.Right)
+		} else {
+			mode.Fprintf(s, "%#v(%.v)", n.Op, n.List)
 		}
 
 	case OCONV,
@@ -1536,6 +1537,8 @@ func (n *Node) nodefmt(s fmt.State, flag FmtFlag, mode fmtMode) {
 	if flag&FmtLong != 0 && t != nil {
 		if t.Etype == TNIL {
 			fmt.Fprint(s, "nil")
+		} else if n.Op == ONAME && n.Name.AutoTemp() {
+			mode.Fprintf(s, "%v value", t)
 		} else {
 			mode.Fprintf(s, "%v (type %v)", n, t)
 		}

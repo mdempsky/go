@@ -46,6 +46,7 @@ type Node struct {
 	// - ODOT, ODOTPTR, and OINDREGSP use it to indicate offset relative to their base address.
 	// - OSTRUCTKEY uses it to store the named field's offset.
 	// - Named OLITERALs use it to store their ambient iota value.
+	// - OINLMARK stores an index into the inlTree data structure.
 	// Possibly still more uses. If you find any, document them.
 	Xoffset int64
 
@@ -667,7 +668,8 @@ const (
 	ORSH         // Left >> Right
 	OAND         // Left & Right
 	OANDNOT      // Left &^ Right
-	ONEW         // new(Left)
+	ONEW         // new(Left); corresponds to calls to new in source code
+	ONEWOBJ      // runtime.newobject(n.Type); introduced by walk; Left is type descriptor
 	ONOT         // !Left
 	OBITNOT      // ^Left
 	OPLUS        // +Left
@@ -750,6 +752,7 @@ const (
 	OVARKILL    // variable is dead
 	OVARLIVE    // variable is alive
 	OINDREGSP   // offset plus indirect of REGSP, such as 8(SP).
+	OINLMARK    // start of an inlined body, with file/line of caller. Xoffset is an index into the inline tree.
 
 	// arch-specific opcodes
 	ORETJMP // return to other function

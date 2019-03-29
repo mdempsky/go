@@ -32,14 +32,15 @@ package work
 import (
 	"cmd/go/internal/load"
 	"fmt"
+	"internal/lazyregexp"
 	"os"
 	"regexp"
 	"strings"
 )
 
-var re = regexp.MustCompile
+var re = lazyregexp.New
 
-var validCompilerFlags = []*regexp.Regexp{
+var validCompilerFlags = []*lazyregexp.Regexp{
 	re(`-D([A-Za-z_].*)`),
 	re(`-F([^@\-].*)`),
 	re(`-I([^@\-].*)`),
@@ -100,6 +101,10 @@ var validCompilerFlags = []*regexp.Regexp{
 	re(`-mmacosx-(.+)`),
 	re(`-mios-simulator-version-min=(.+)`),
 	re(`-miphoneos-version-min=(.+)`),
+	re(`-mtvos-simulator-version-min=(.+)`),
+	re(`-mtvos-version-min=(.+)`),
+	re(`-mwatchos-simulator-version-min=(.+)`),
+	re(`-mwatchos-version-min=(.+)`),
 	re(`-mnop-fun-dllimport`),
 	re(`-m(no-)?sse[0-9.]*`),
 	re(`-m(no-)?ssse3`),
@@ -130,7 +135,7 @@ var validCompilerFlagsWithNextArg = []string{
 	"-x",
 }
 
-var validLinkerFlags = []*regexp.Regexp{
+var validLinkerFlags = []*lazyregexp.Regexp{
 	re(`-F([^@\-].*)`),
 	re(`-l([^@\-].*)`),
 	re(`-L([^@\-].*)`),
@@ -166,6 +171,7 @@ var validLinkerFlags = []*regexp.Regexp{
 	re(`-Wl,--(no-)?allow-shlib-undefined`),
 	re(`-Wl,--(no-)?as-needed`),
 	re(`-Wl,-Bdynamic`),
+	re(`-Wl,-berok`),
 	re(`-Wl,-Bstatic`),
 	re(`-WL,-O([^@,\-][^,]*)?`),
 	re(`-Wl,-d[ny]`),
@@ -217,7 +223,7 @@ func checkLinkerFlags(name, source string, list []string) error {
 	return checkFlags(name, source, list, validLinkerFlags, validLinkerFlagsWithNextArg)
 }
 
-func checkFlags(name, source string, list []string, valid []*regexp.Regexp, validNext []string) error {
+func checkFlags(name, source string, list []string, valid []*lazyregexp.Regexp, validNext []string) error {
 	// Let users override rules with $CGO_CFLAGS_ALLOW, $CGO_CFLAGS_DISALLOW, etc.
 	var (
 		allow    *regexp.Regexp

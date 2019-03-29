@@ -49,10 +49,13 @@ that can be run locally. It must either be in the shell path
 command alias, described below.
 
 To convey to humans and machine tools that code is generated,
-generated source should have a line early in the file that
-matches the following regular expression (in Go syntax):
+generated source should have a line that matches the following
+regular expression (in Go syntax):
 
 	^// Code generated .* DO NOT EDIT\.$
+
+The line may appear anywhere in the file, but is typically
+placed near the beginning so it is easy to find.
 
 Note that go generate does not parse the file, so lines that look
 like directives in comments or multiline strings will be treated
@@ -107,8 +110,8 @@ specifies that the command "foo" represents the generator
 "go tool foo".
 
 Generate processes packages in the order given on the command line,
-one at a time. If the command line lists .go files, they are treated
-as a single package. Within a package, generate processes the
+one at a time. If the command line lists .go files from a single directory,
+they are treated as a single package. Within a package, generate processes the
 source files in a package in file name order, one at a time. Within
 a source file, generate runs generators in the order they appear
 in the file, one at a time.
@@ -425,7 +428,7 @@ func (g *Generator) exec(words []string) {
 	cmd.Stderr = os.Stderr
 	// Run the command in the package directory.
 	cmd.Dir = g.dir
-	cmd.Env = base.MergeEnvLists(g.env, cfg.OrigEnv)
+	cmd.Env = append(cfg.OrigEnv, g.env...)
 	err := cmd.Run()
 	if err != nil {
 		g.errorf("running %q: %s", words[0], err)

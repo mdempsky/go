@@ -322,6 +322,9 @@ func walkstmt(n *Node) *Node {
 	case ORETJMP:
 		break
 
+	case OINLMARK:
+		break
+
 	case OSELECT:
 		walkselect(n)
 
@@ -395,10 +398,14 @@ func convFuncName(from, to *types.Type) (fnname string, needsaddr bool) {
 			return "convT32", false
 		case from.Size() == 8 && from.Align == types.Types[TUINT64].Align && !types.Haspointers(from):
 			return "convT64", false
-		case from.IsString():
-			return "convTstring", false
-		case from.IsSlice():
-			return "convTslice", false
+		}
+		if sc := from.SoleComponent(); sc != nil {
+			switch {
+			case sc.IsString():
+				return "convTstring", false
+			case sc.IsSlice():
+				return "convTslice", false
+			}
 		}
 
 		switch tkind {
@@ -474,7 +481,7 @@ opswitch:
 		Dump("walk", n)
 		Fatalf("walkexpr: switch 1 unknown op %+S", n)
 
-	case ONONAME, OINDREGSP, OEMPTY, OGETG:
+	case ONONAME, OINDREGSP, OEMPTY, OGETG, ONEWOBJ:
 
 	case OTYPE, ONAME, OLITERAL:
 		// TODO(mdempsky): Just return n; see discussion on CL 38655.
@@ -490,7 +497,7 @@ opswitch:
 		n.Left = walkexpr(n.Left, init)
 		n.Right = walkexpr(n.Right, init)
 
-	case ODOT:
+	case ODOT, ODOTPTR:
 		usefield(n)
 		n.Left = walkexpr(n.Left, init)
 
@@ -504,17 +511,6 @@ opswitch:
 		if !n.Type.IsInterface() && !n.Left.Type.IsEmptyInterface() {
 			n.List.Set1(itabname(n.Type, n.Left.Type))
 		}
-
-	case ODOTPTR:
-		usefield(n)
-		if n.Op == ODOTPTR && n.Left.Type.Elem().Width == 0 {
-			// No actual copy will be generated, so emit an explicit nil check.
-			n.Left = cheapexpr(n.Left, init)
-
-			checknil(n.Left, init)
-		}
-
-		n.Left = walkexpr(n.Left, init)
 
 	case OLEN, OCAP:
 		if isRuneCount(n) {
@@ -1948,11 +1944,11 @@ func callnew(t *types.Type) *Node {
 		yyerror("%v is go:notinheap; heap allocation disallowed", t)
 	}
 	dowidth(t)
-	fn := syslook("newobject")
-	fn = substArgTypes(fn, t)
-	v := mkcall1(fn, types.NewPtr(t), nil, typename(t))
-	v.SetNonNil(true)
-	return v
+	n := nod(ONEWOBJ, typename(t), nil)
+	n.Type = types.NewPtr(t)
+	n.SetTypecheck(1)
+	n.SetNonNil(true)
+	return n
 }
 
 // isReflectHeaderDataField reports whether l is an expression p.Data
@@ -3110,11 +3106,9 @@ func walkcompare(n *Node, init *Nodes) *Node {
 	if l != nil {
 		// Handle both == and !=.
 		eq := n.Op
-		var andor Op
+		andor := OOROR
 		if eq == OEQ {
 			andor = OANDAND
-		} else {
-			andor = OOROR
 		}
 		// Check for types equal.
 		// For empty interface, this is:
@@ -3350,12 +3344,6 @@ func walkcompareInterface(n *Node, init *Nodes) *Node {
 }
 
 func walkcompareString(n *Node, init *Nodes) *Node {
-	// s + "badgerbadgerbadger" == "badgerbadgerbadger"
-	if (n.Op == OEQ || n.Op == ONE) && Isconst(n.Right, CTSTR) && n.Left.Op == OADDSTR && n.Left.List.Len() == 2 && Isconst(n.Left.List.Second(), CTSTR) && strlit(n.Right) == strlit(n.Left.List.Second()) {
-		r := nod(n.Op, nod(OLEN, n.Left.List.First(), nil), nodintconst(0))
-		return finishcompare(n, r, init)
-	}
-
 	// Rewrite comparisons to short constant strings as length+byte-wise comparisons.
 	var cs, ncs *Node // const string, non-const string
 	switch {
