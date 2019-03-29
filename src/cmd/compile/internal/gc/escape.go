@@ -298,8 +298,6 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		k = e.discardHole()
 	}
 
-	// fmt.Printf("valueSkipInit: %v, %v\n", k, n)
-
 	switch n.Op {
 	default:
 		Fatalf("unexpected expr: %v", n)
