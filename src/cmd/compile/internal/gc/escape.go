@@ -591,7 +591,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 			fn = fn.Func.Closure.Func.Nname
 		}
 	case OCALLMETH:
-		fn = asNode(call.Left.Sym.Def)
+		fn = asNode(call.Left.Type.FuncType().Nname)
 		recv = call.Left.Left
 	case OCALLINTER:
 		recv = call.Left.Left
@@ -650,9 +650,6 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 			paramKs = append(paramKs, e.addr(asNode(param.Nname)))
 		}
 	} else if call.Op == OCALLFUNC || call.Op == OCALLMETH || call.Op == OCALLINTER {
-		if call.Op == OCALLMETH {
-			direct = true // ugh
-		}
 		fntype = call.Left.Type
 		if debugLevel(2) {
 			Warnl(call.Pos, "calling %v/%v using its tags (direct=%v)", call.Left, fntype, direct)
@@ -1377,8 +1374,10 @@ func (e *EscState) cleanup(all []*Node) {
 				}
 
 				loc.paramEsc = finalizeEsc(loc.paramEsc)
-				if want != loc.paramEsc {
-					Warnl(n.Pos, "waahh: %v is 0x%x, but 0x%x", n, want, loc.paramEsc)
+				if escWorseThan(loc.paramEsc, want) {
+					Warnl(n.Pos, "waahh: %v was 0x%x, but now 0x%x", n, want, loc.paramEsc)
+				} else if loc.paramEsc != want {
+					Warnl(n.Pos, "not so bad: %v was 0x%x, but now 0x%x", n, want, loc.paramEsc)
 				}
 			}
 		}
@@ -1409,6 +1408,33 @@ func (e *EscState) cleanup(all []*Node) {
 
 	HeapLoc = EscLocation{}
 	BlankLoc = EscLocation{}
+}
+
+// escWorseThan reports whether e1 is a "worse" escape analysis result
+// than e2; that is, whether it means more stuff escapes.
+func escWorseThan(e1, e2 uint16) bool {
+	if e2 == EscHeap {
+		// Nothing is worse than always escaping to heap.
+		return false
+	}
+	if e1 == EscHeap {
+		// Escaping to heap is worse than anything but itself.
+		return true
+	}
+
+	if (e1&EscContentEscapes) != 0 && (e2&EscContentEscapes) == 0 {
+		return true
+	}
+
+	for i := 0; i < 16; i++ {
+		x1 := int(e1>>uint(EscReturnBits+i*bitsPerOutputInTag)) & int(bitsMaskForTag)
+		x2 := int(e2>>uint(EscReturnBits+i*bitsPerOutputInTag)) & int(bitsMaskForTag)
+		if x1 != 0 && x1 < x2 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *EscState) notTracked(n *Node) {
