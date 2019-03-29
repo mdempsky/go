@@ -1340,13 +1340,21 @@ func (e *EscState) cleanup(all []*Node) {
 			}
 			escaped := esc != EscNone
 			if escaped != loc.escapes {
-				Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v", n, n.Op, esc, loc.escapes)
+				x := "worse"
+				if !loc.escapes {
+					x = "better"
+				}
+				Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v (%s)", n, n.Op, esc, loc.escapes, x)
 			}
 
 			switch n.Op {
 			case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
 				if n.Noescape() != loc.transient {
-					Warnl(n.Pos, "noescape: %v want %v, but got %v", n, n.Noescape(), loc.transient)
+					x := "worse"
+					if loc.transient {
+						x = "better"
+					}
+					Warnl(n.Pos, "noescape: %v want %v, but got %v (%s)", n, n.Noescape(), loc.transient, x)
 				}
 			}
 
