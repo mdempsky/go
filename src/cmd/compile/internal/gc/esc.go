@@ -373,7 +373,7 @@ func escAnalyze(all []*Node, recursive bool) {
 
 	e.flood(all)
 
-	if !esc2Live {
+	if !esc2Live || esc2Diff {
 		// visit the upstream of each dst, mark address nodes with
 		// addrescapes, mark parameters unsafe
 		escapes := make([]uint16, len(e.dsts))
@@ -418,7 +418,9 @@ func escAnalyze(all []*Node, recursive bool) {
 				}
 			}
 		}
+	}
 
+	if !esc2Live || esc2Diff {
 		for _, x := range e.opts {
 			x.SetOpt(nil)
 		}
@@ -437,7 +439,7 @@ func (e *EscState) escfunc(fn *Node) {
 	savefn := Curfn
 	Curfn = fn
 
-	if !esc2Live {
+	if !esc2Live || esc2Diff {
 		for _, ln := range Curfn.Func.Dcl {
 			if ln.Op != ONAME {
 				continue
@@ -477,7 +479,7 @@ func (e *EscState) escfunc(fn *Node) {
 	e.stmts(fn.Nbody)
 	e.loopdepth = 1
 
-	if !esc2Live {
+	if !esc2Live || esc2Diff {
 		e.esclist(Curfn.Nbody, Curfn)
 	}
 	Curfn = savefn
