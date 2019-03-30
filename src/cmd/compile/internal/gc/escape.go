@@ -248,10 +248,12 @@ func (e *EscState) stmt(n *Node) {
 		e.assign(n.List.Second(), nil, "assign-pair-receive", n)
 
 	case OAS2FUNC:
+		e.stmts(n.Rlist.First().Ninit)
 		e.call(e.addrs(n.List), n.Rlist.First(), nil)
 	case ORETURN:
 		ks := e.resultHoles()
 		if len(ks) > 1 && n.List.Len() == 1 {
+			Fatalf("weird return")
 			// TODO(mdempsky): Handle implicit conversions.
 			e.call(ks, n.List.First(), nil)
 		} else {
@@ -262,6 +264,7 @@ func (e *EscState) stmt(n *Node) {
 	case OCALLFUNC, OCALLMETH, OCALLINTER, OCLOSE, OCOPY, ODELETE, OPANIC, OPRINT, OPRINTN, ORECOVER:
 		e.call(nil, n, nil)
 	case OGO, ODEFER:
+		e.stmts(n.Left.Ninit)
 		e.call(nil, n.Left, n)
 
 	case ORETJMP:
@@ -323,7 +326,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OADDR:
-		e.notTracked(n)
+		e.notTracked(n, "address-of")
 		e.value(k.addr(n, "address-of"), n.Left) // "address-of"
 	case ODEREF:
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
@@ -364,7 +367,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		if !n.Left.Type.IsInterface() && !isdirectiface(n.Left.Type) {
 			k = e.spill(k, n)
 		} else {
-			e.notTracked(n)
+			e.notTracked(n, "direct iface")
 		}
 		e.value(k.note(n, "interface-converted"), n.Left)
 
@@ -382,7 +385,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Left)
 		e.discard(n.Right)
 	case OMAKECHAN:
-		e.notTracked(n)
+		e.notTracked(n, "make chan")
 		e.discard(n.Left)
 	case OMAKEMAP:
 		e.spill(k, n)
@@ -1122,11 +1125,11 @@ func (e *EscState) walk(root *EscLocation) {
 		// result parameter, then record that value flow for
 		// tagging the function later.
 		if p.isName(PPARAM) {
-			if root == &HeapLoc {
-				p.leak(-1, base)
-			} else if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
+			if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
 				// TODO(mdempsky): Eliminate dependency on Vargen here.
 				p.leak(int(root.n.Name.Vargen)-1, base)
+			} else if root == &HeapLoc || root.isName(PPARAMOUT) {
+				p.leak(-1, base)
 			}
 		}
 
@@ -1446,9 +1449,9 @@ func escWorseThan(e1, e2 uint16) bool {
 	return false
 }
 
-func (e *EscState) notTracked(n *Node) {
+func (e *EscState) notTracked(n *Node, why string) {
 	if esc2Live && Debug['m'] != 0 {
-		Warnl(n.Pos, "%S %S not tracked", funcSym(Curfn), n)
+		Warnl(n.Pos, "%S %S not tracked (%s)", funcSym(Curfn), n, why)
 	}
 }
 
