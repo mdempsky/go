@@ -71,13 +71,13 @@ import (
 // If oldEscCompat is true, we try to be more compatible with esc.go's
 // quirks.
 // TODO(mdempsky): Remove.
-const oldEscCompat = true
+const oldEscCompat = false
 
 // If esc2Live is true, then esc2.go drives escape analysis instead of
 // esc.go.
 const esc2Live = true
 
-const esc2Diff = false
+const esc2Diff = true
 
 // TODO(mdempsky): Document how to write and maintain code.
 //
@@ -1124,13 +1124,13 @@ func (e *EscState) walk(root *EscLocation) {
 		// parameter and root is the heap or a corresponding
 		// result parameter, then record that value flow for
 		// tagging the function later.
-		if p.isName(PPARAM) {
+		if p.isName(PPARAM) && root.outlives(p) {
+			vi := -1
 			if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
 				// TODO(mdempsky): Eliminate dependency on Vargen here.
-				p.leak(int(root.n.Name.Vargen)-1, base)
-			} else if root == &HeapLoc || root.isName(PPARAMOUT) {
-				p.leak(-1, base)
+				vi = int(root.n.Name.Vargen) - 1
 			}
+			p.leak(vi, base)
 		}
 
 		for _, edge := range p.edges {
