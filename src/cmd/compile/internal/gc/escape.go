@@ -72,8 +72,6 @@ import (
 // esc.go.
 var esc2Live bool
 
-const esc2Diff = false
-
 // TODO(mdempsky): Document how to write and maintain code.
 //
 // In particular, it's important to always visit the entire AST. That
@@ -460,6 +458,11 @@ func (e *Escape) valueSkipInit(k EscHole, n *Node) {
 		// runtime.concatstrings makes sure of that.
 		e.discards(n.List)
 	}
+}
+
+// TODO(mdempsky): Remove.
+func (e *Escape) notTracked(k EscHole, n *Node, why string) {
+	e.spill(k, n)
 }
 
 // unsafeValue evaluates a uintptr-typed arithmetic expression looking
@@ -943,7 +946,6 @@ func (e *Escape) newLoc(n *Node) *EscLocation {
 		loopDepth: int(e.loopdepth),
 		transient: true,
 	}
-	allocLocs++
 	allLocs = append(allLocs, loc)
 	if n != nil {
 		escLocs[n] = loc
@@ -1020,8 +1022,6 @@ func (e *Escape) flow(k EscHole, src_ *EscLocation) {
 	}
 
 	// TODO(mdempsky): Deduplicate edges?
-
-	allocEdges++
 
 	dst.edges = append(dst.edges, EscEdge{src: src_, derefs: k.derefs})
 	if debugLevel(2) {
@@ -1256,162 +1256,62 @@ func dddLen(n *Node) int {
 }
 
 func (e *Escape) cleanup(all []*Node) {
-	if esc2Diff {
-		for n, loc := range escLocs {
-			var esc uint16 = EscUnknown
-			switch n.Op {
-			case OCALLFUNC, OCALLMETH, OCALLINTER:
-				// esc.go doesn't create ODDDARG for all
-				// calls. If it's missing, then walk.go treats
-				// it as EscUnknown.
-				if x := n.Right; x != nil {
-					esc = x.Esc
-				} else if n.Esc == 42 {
-					continue
-				}
-			case ONAME:
-				if n.Class() == PAUTOHEAP {
-					esc = EscHeap
-				} else {
-					esc = EscNone
-				}
-			case OTYPESW, ORANGE, ODEFER:
-				// Temporary location; not real.
-				continue
-			default:
-				esc = n.Esc
-			}
-			escaped := esc != EscNone
-			if escaped != loc.escapes {
-				x := "worse"
-				if !loc.escapes {
-					x = "better"
-				}
-				Warnl(n.Pos, "noooo: %v (%v) is 0x%x, but %v (%s)", n, n.Op, esc, loc.escapes, x)
-			}
+	for n, loc := range escLocs {
+		switch n.Op {
+		case OTYPESW:
+			continue
+		case OCALLFUNC, OCALLMETH, OCALLINTER:
+			elt := n.Left.Type.Params().Field(n.Left.Type.NumParams() - 1).Type.Elem()
+			ddd := nodl(n.Pos, ODDDARG, nil, nil)
+			ddd.Type = types.NewPtr(types.NewArray(elt, int64(dddLen(n))))
 
-			switch n.Op {
-			case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
-				if n.Noescape() != loc.transient {
-					x := "worse"
-					if loc.transient {
-						x = "better"
-					}
-					Warnl(n.Pos, "noescape: %v want %v, but got %v (%s)", n, n.Noescape(), loc.transient, x)
-				}
-			}
-
-			if n.Op == ONAME && n.Class() == PAUTOHEAP {
-				n = n.Name.Param.Stackcopy
-				if n == nil {
-					continue
-				}
-			}
-			if n.Op == ONAME && n.Class() == PPARAM && types.Haspointers(n.Type) {
-				want := optimizeReturns(n.Esc)
-				if want == EscReturn|EscContentEscapes {
-					// esc.go leaves EscReturn sometimes
-					// when it doesn't matter.
-					want = EscNone | EscContentEscapes
-				}
-
-				// TODO(mdempsky): It seems like I'm not
-				// handling escaped parameters
-				// correctly. Figure this out, and in the mean
-				// time, since 0 is nonsense, just use EscHeap
-				// conservatively.
-				if want == 0 {
-					want = EscHeap
-				}
-
-				loc.paramEsc = finalizeEsc(loc.paramEsc)
-				if escWorseThan(loc.paramEsc, want) {
-					Warnl(n.Pos, "waahh: %v was 0x%x, but now 0x%x", n, want, loc.paramEsc)
-				} else if loc.paramEsc != want {
-					Warnl(n.Pos, "not so bad: %v was 0x%x, but now 0x%x", n, want, loc.paramEsc)
-				}
-			}
+			n.Right = ddd
+			n = ddd
 		}
-	}
 
-	if esc2Live {
-		for n, loc := range escLocs {
-			switch n.Op {
-			case OTYPESW:
-				continue
-			case OCALLFUNC, OCALLMETH, OCALLINTER:
-				elt := n.Left.Type.Params().Field(n.Left.Type.NumParams() - 1).Type.Elem()
-				ddd := nodl(n.Pos, ODDDARG, nil, nil)
-				ddd.Type = types.NewPtr(types.NewArray(elt, int64(dddLen(n))))
+		// TODO(mdempsky): Describe path when Debug['m'] >= 2.
 
-				n.Right = ddd
-				n = ddd
+		if loc.escapes {
+			if Debug['m'] != 0 && n.Op != ONAME {
+				Warnl(n.Pos, "%S escapes to heap", n)
 			}
+			n.Esc = EscHeap
+			addrescapes(n)
+		} else if loc.isName(PPARAM) {
+			n.Esc = finalizeEsc(loc.paramEsc)
 
-			// TODO(mdempsky): Describe path when Debug['m'] >= 2.
-
-			if loc.escapes {
-				if Debug['m'] != 0 && n.Op != ONAME {
-					Warnl(n.Pos, "%S escapes to heap", n)
-				}
-				n.Esc = EscHeap
-				addrescapes(n)
-			} else if loc.isName(PPARAM) {
-				n.Esc = finalizeEsc(loc.paramEsc)
-
-				if Debug['m'] != 0 && types.Haspointers(n.Type) {
-					if n.Esc == EscNone {
-						Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
-					} else if n.Esc == EscHeap {
-						Warnl(n.Pos, "leaking param: %S", n)
-					} else {
-						if n.Esc&EscContentEscapes != 0 {
-							Warnl(n.Pos, "leaking param content: %S", n)
-						}
-						for i := 0; i < 16; i++ {
-							x := (n.Esc >> uint(EscReturnBits+i*bitsPerOutputInTag)) & bitsMaskForTag
-							if x != 0 {
-								res := n.Name.Curfn.Type.Results().Field(i).Sym
-								Warnl(n.Pos, "leaking param: %S to result %v level=%d", n, res, x-1)
-							}
-						}
-					}
-				}
-			} else {
-				n.Esc = EscNone
-				if loc.transient {
-					switch n.Op {
-					case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
-						n.SetNoescape(true)
-					}
-				}
-
-				if Debug['m'] != 0 && n.Op != ONAME && n.Op != OTYPESW && n.Op != ORANGE && n.Op != ODEFER {
+			if Debug['m'] != 0 && types.Haspointers(n.Type) {
+				if n.Esc == EscNone {
 					Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
+				} else if n.Esc == EscHeap {
+					Warnl(n.Pos, "leaking param: %S", n)
+				} else {
+					if n.Esc&EscContentEscapes != 0 {
+						Warnl(n.Pos, "leaking param content: %S", n)
+					}
+					for i := 0; i < 16; i++ {
+						x := (n.Esc >> uint(EscReturnBits+i*bitsPerOutputInTag)) & bitsMaskForTag
+						if x != 0 {
+							res := n.Name.Curfn.Type.Results().Field(i).Sym
+							Warnl(n.Pos, "leaking param: %S to result %v level=%d", n, res, x-1)
+						}
+					}
 				}
+			}
+		} else {
+			n.Esc = EscNone
+			if loc.transient {
+				switch n.Op {
+				case OCALLPART, OCLOSURE, ODDDARG, OARRAYLIT, OSLICELIT, OPTRLIT, OSTRUCTLIT:
+					n.SetNoescape(true)
+				}
+			}
+
+			if Debug['m'] != 0 && n.Op != ONAME && n.Op != OTYPESW && n.Op != ORANGE && n.Op != ODEFER {
+				Warnl(n.Pos, "%S %S does not escape", funcSym(loc.curfn), n)
 			}
 		}
 	}
-
-	if allocLocs > maxLocs {
-		maxLocs = allocLocs
-	}
-	totalLocs += allocLocs
-
-	if allocEdges > maxEdges {
-		maxEdges = allocEdges
-	}
-	totalEdges += allocEdges
-
-	if allocState > maxState {
-		maxState = allocState
-	}
-	totalState += allocState
-
-	if allocFlow > maxFlow {
-		maxFlow = allocFlow
-	}
-	totalFlow += allocFlow
 
 	escLocs = map[*Node]*EscLocation{}
 	allLocs = nil
@@ -1445,27 +1345,6 @@ func escWorseThan(e1, e2 uint16) bool {
 	}
 
 	return false
-}
-
-func (e *Escape) notTracked(k EscHole, n *Node, why string) {
-	e.spill(k, n)
-	return
-
-	if esc2Live && Debug['m'] != 0 {
-		Warnl(n.Pos, "%S %S not tracked (%s)", funcSym(Curfn), n, why)
-	}
-}
-
-var allocLocs, maxLocs, totalLocs int
-var allocEdges, maxEdges, totalEdges int
-
-func escfinished() {
-	if debugLevel(1) {
-		fmt.Printf("locations:   %d\t%d\n", totalLocs, maxLocs)
-		fmt.Printf("edges:       %d\t%d\n", totalEdges, maxEdges)
-		fmt.Printf("state:       %d\t%d\n", totalState, maxState)
-		fmt.Printf("flow:        %d\t%d\n", totalFlow, maxFlow)
-	}
 }
 
 func finalizeEsc(esc uint16) uint16 {
