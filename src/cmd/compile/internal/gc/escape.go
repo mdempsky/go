@@ -91,7 +91,11 @@ const esc2Diff = false
 // reflect.Value.UnsafeAddr's receiver params as esc:0x12 because it
 // flows to the result as a uintptr, but we mark it as esc:0x1 here.
 
-func (e *EscState) stmt(n *Node) {
+type Escape struct {
+	loopdepth int
+}
+
+func (e *Escape) stmt(n *Node) {
 	if n == nil {
 		return
 	}
@@ -267,13 +271,13 @@ func (e *EscState) stmt(n *Node) {
 	}
 }
 
-func (e *EscState) stmts(l Nodes) {
+func (e *Escape) stmts(l Nodes) {
 	for _, n := range l.Slice() {
 		e.stmt(n)
 	}
 }
 
-func (e *EscState) value(k EscHole, n *Node) {
+func (e *Escape) value(k EscHole, n *Node) {
 	if n == nil {
 		return
 	}
@@ -281,7 +285,7 @@ func (e *EscState) value(k EscHole, n *Node) {
 	e.valueSkipInit(k, n)
 }
 
-func (e *EscState) valueSkipInit(k EscHole, n *Node) {
+func (e *Escape) valueSkipInit(k EscHole, n *Node) {
 	if n == nil {
 		return
 	}
@@ -465,7 +469,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 
 // unsafeValue evaluates a uintptr-typed arithmetic expression looking
 // for conversions from an unsafe.Pointer.
-func (e *EscState) unsafeValue(k EscHole, n *Node) {
+func (e *Escape) unsafeValue(k EscHole, n *Node) {
 	if n.Type.Etype != TUINTPTR {
 		Fatalf("unexpected type %v for %v", n.Type, n)
 	}
@@ -491,17 +495,17 @@ func (e *EscState) unsafeValue(k EscHole, n *Node) {
 	}
 }
 
-func (e *EscState) discard(n *Node) {
+func (e *Escape) discard(n *Node) {
 	e.value(e.discardHole(), n)
 }
 
-func (e *EscState) discards(l Nodes) {
+func (e *Escape) discards(l Nodes) {
 	for _, n := range l.Slice() {
 		e.discard(n)
 	}
 }
 
-func (e *EscState) addr(n *Node) EscHole {
+func (e *Escape) addr(n *Node) EscHole {
 	if n == nil || n.isBlank() {
 		// Can happen at least in OSELRECV.
 		// TODO(mdempsky): Anywhere else?
@@ -550,7 +554,7 @@ func (e *EscState) addr(n *Node) EscHole {
 	return k
 }
 
-func (e *EscState) addrs(l Nodes) []EscHole {
+func (e *Escape) addrs(l Nodes) []EscHole {
 	var ks []EscHole
 	for _, n := range l.Slice() {
 		ks = append(ks, e.addr(n))
@@ -558,9 +562,9 @@ func (e *EscState) addrs(l Nodes) []EscHole {
 	return ks
 }
 
-func (e *EscState) assign(dst, src *Node, why string, where *Node) {
+func (e *Escape) assign(dst, src *Node, why string, where *Node) {
 	// Filter out some no-op assignments for escape analysis.
-	ignore := dst != nil && src != nil && e.isSelfAssign(dst, src)
+	ignore := dst != nil && src != nil && isSelfAssign(dst, src)
 	if ignore && Debug['m'] != 0 {
 		Warnl(where.Pos, "%v ignoring self-assignment in %S", funcSym(Curfn), where)
 	}
@@ -576,11 +580,11 @@ func (e *EscState) assign(dst, src *Node, why string, where *Node) {
 	e.value(k, src)
 }
 
-func (e *EscState) assignHeap(src *Node, why string, where *Node) {
+func (e *Escape) assignHeap(src *Node, why string, where *Node) {
 	e.value(e.heapHole().note(where, why), src)
 }
 
-func (e *EscState) call(ks []EscHole, call, where *Node) {
+func (e *Escape) call(ks []EscHole, call, where *Node) {
 	var fn, recv *Node
 	args := call.List.Slice()
 	switch call.Op {
@@ -763,7 +767,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 }
 
 // teeHole returns a new hole that flows into each of ks.
-func (e *EscState) teeHole(ks ...EscHole) EscHole {
+func (e *Escape) teeHole(ks ...EscHole) EscHole {
 	if len(ks) == 0 {
 		return e.discardHole()
 	}
@@ -789,7 +793,7 @@ func (e *EscState) teeHole(ks ...EscHole) EscHole {
 	return loc.asHole()
 }
 
-func (e *EscState) tagHole(ks []EscHole, direct bool, param *types.Field, transient bool) EscHole {
+func (e *Escape) tagHole(ks []EscHole, direct bool, param *types.Field, transient bool) EscHole {
 	tag := param.Note
 	if debugLevel(2) {
 		fmt.Printf("tagHole: [%v] = %q, direct=%v\n", ks, tag, direct)
@@ -883,13 +887,13 @@ func (k EscHole) shift(delta int) EscHole {
 func (k EscHole) deref(where *Node, why string) EscHole { return k.shift(1).note(where, why) }
 func (k EscHole) addr(where *Node, why string) EscHole  { return k.shift(-1).note(where, why) }
 
-func (e *EscState) dcl(n *Node) EscHole {
+func (e *Escape) dcl(n *Node) EscHole {
 	loc := e.oldLoc(n)
 	loc.loopDepth = int(e.loopdepth)
 	return loc.asHole()
 }
 
-func (e *EscState) spill(k EscHole, n *Node) EscHole {
+func (e *Escape) spill(k EscHole, n *Node) EscHole {
 	// TODO(mdempsky): Optimize. E.g., if k is the heap or blank,
 	// then we already know whether n leaks, and we can return a
 	// more optimized hole.
@@ -918,7 +922,7 @@ func normalize(n *Node) *Node {
 	return n
 }
 
-func (e *EscState) newLoc(n *Node) *EscLocation {
+func (e *Escape) newLoc(n *Node) *EscLocation {
 	if Curfn == nil {
 		Fatalf("Curfn isn't set")
 	}
@@ -963,7 +967,7 @@ func (e *EscState) newLoc(n *Node) *EscLocation {
 	return loc
 }
 
-func (e *EscState) oldLoc(n *Node) *EscLocation {
+func (e *Escape) oldLoc(n *Node) *EscLocation {
 	n = normalize(n)
 	if n == nil {
 		Fatalf("can't get old location for nil pointer")
@@ -999,7 +1003,7 @@ func (l *EscLocation) String() string {
 	return fmt.Sprintf("%v", l.n)
 }
 
-func (e *EscState) flow(k EscHole, src_ *EscLocation) {
+func (e *Escape) flow(k EscHole, src_ *EscLocation) {
 	// TODO(mdempsky): More optimizations. E.g., src == dst &&
 	// k.derefs >= 0 can be ignored.
 
@@ -1030,10 +1034,10 @@ func (e *EscState) flow(k EscHole, src_ *EscLocation) {
 	}
 }
 
-func (e *EscState) heapHole() EscHole    { return HeapLoc.asHole() }
-func (e *EscState) discardHole() EscHole { return BlankLoc.asHole() }
+func (e *Escape) heapHole() EscHole    { return HeapLoc.asHole() }
+func (e *Escape) discardHole() EscHole { return BlankLoc.asHole() }
 
-func (e *EscState) resultHoles() []EscHole {
+func (e *Escape) resultHoles() []EscHole {
 	var ks []EscHole
 	for _, f := range Curfn.Type.Results().FieldSlice() {
 		ks = append(ks, e.addr(asNode(f.Nname)))
@@ -1044,7 +1048,7 @@ func (e *EscState) resultHoles() []EscHole {
 var escLocs = map[*Node]*EscLocation{}
 var allLocs []*EscLocation
 
-func (e *EscState) setup(all []*Node) {
+func (e *Escape) setup(all []*Node) {
 	e.loopdepth = 1
 	for _, fn := range all {
 		Curfn = fn
@@ -1061,20 +1065,23 @@ func (e *EscState) setup(all []*Node) {
 	Curfn = nil
 }
 
-func (e *EscState) flood(all []*Node) {
+func (e *Escape) flood(all []*Node) {
+	var walkgen uint32
+
 	for _, loc := range allLocs {
-		e.walk(loc)
+		walkgen++
+		e.walk(loc, walkgen)
 	}
 
-	e.walk(&HeapLoc)
+	walkgen++
+	e.walk(&HeapLoc, walkgen)
 }
 
-func (e *EscState) walk(root *EscLocation) {
+func (e *Escape) walk(root *EscLocation, walkgen uint32) {
 	if debugLevel(1) {
 		Warnl(src.NoXPos, "esc2: walking from %v", root)
 	}
-	e.walkgen++
-	root.walkgen = e.walkgen
+	root.walkgen = walkgen
 	root.distance = 0
 	todo := []*EscLocation{root}
 	for len(todo) > 0 {
@@ -1134,8 +1141,8 @@ func (e *EscState) walk(root *EscLocation) {
 			if debugLevel(1) {
 				Warnl(src.NoXPos, "esc2: edge from %v (%v) ~> %v (%v) at distance %v", p, p.distance, edge.src, edge.src.distance, dist)
 			}
-			if edge.src.walkgen != e.walkgen || edge.src.distance > dist {
-				edge.src.walkgen = e.walkgen
+			if edge.src.walkgen != walkgen || edge.src.distance > dist {
+				edge.src.walkgen = walkgen
 				edge.src.distance = dist
 				todo = append(todo, edge.src)
 			}
@@ -1253,7 +1260,7 @@ func dddLen(n *Node) int {
 	return n.List.Len() - (n.Left.Type.NumParams() - 1)
 }
 
-func (e *EscState) cleanup(all []*Node) {
+func (e *Escape) cleanup(all []*Node) {
 	if esc2Diff {
 		for n, loc := range escLocs {
 			var esc uint16 = EscUnknown
@@ -1445,7 +1452,7 @@ func escWorseThan(e1, e2 uint16) bool {
 	return false
 }
 
-func (e *EscState) notTracked(k EscHole, n *Node, why string) {
+func (e *Escape) notTracked(k EscHole, n *Node, why string) {
 	e.spill(k, n)
 	return
 

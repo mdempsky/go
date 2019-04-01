@@ -42,7 +42,11 @@ import (
 // The same is true of slice literals.
 
 func escapes(all []*Node) {
-	visitBottomUp(all, escAnalyze)
+	esc := escAnalyze
+	if esc2Live {
+		esc = escapesComponent
+	}
+	visitBottomUp(all, esc)
 	escfinished()
 }
 
@@ -362,6 +366,71 @@ func escAnalyze(all []*Node, recursive bool) {
 		}
 	}
 
+	// flow-analyze functions
+	for _, n := range all {
+		if n.Op == ODCLFUNC {
+			e.escfunc(n)
+		}
+	}
+
+	// visit the upstream of each dst, mark address nodes with
+	// addrescapes, mark parameters unsafe
+	escapes := make([]uint16, len(e.dsts))
+	for i, n := range e.dsts {
+		escapes[i] = n.Esc
+	}
+	for _, n := range e.dsts {
+		e.escflood(n)
+	}
+	for {
+		done := true
+		for i, n := range e.dsts {
+			if n.Esc != escapes[i] {
+				done = false
+				if Debug['m'] > 2 {
+					Warnl(n.Pos, "Reflooding %v %S", e.curfnSym(n), n)
+				}
+				escapes[i] = n.Esc
+				e.escflood(n)
+			}
+		}
+		if done {
+			break
+		}
+	}
+
+	// for all top level functions, tag the typenodes corresponding to the param nodes
+	for _, n := range all {
+		if n.Op == ODCLFUNC {
+			esctag(n)
+		}
+	}
+
+	if Debug['m'] != 0 {
+		for _, n := range e.noesc {
+			if n.Esc == EscNone && n.Op != OADDR {
+				Warnl(n.Pos, "%v %S does not escape", e.curfnSym(n), n)
+			}
+		}
+	}
+
+	for _, x := range e.opts {
+		x.SetOpt(nil)
+	}
+}
+
+func escapesComponent(all []*Node, recursive bool) {
+	var e Escape
+
+	for _, n := range all {
+		if n.Op == ODCLFUNC {
+			n.Esc = EscFuncPlanned
+			if Debug['m'] > 3 {
+				Dump("escAnalyze", n)
+			}
+		}
+	}
+
 	e.setup(all)
 
 	// flow-analyze functions
@@ -373,59 +442,14 @@ func escAnalyze(all []*Node, recursive bool) {
 
 	e.flood(all)
 
-	if !esc2Live || esc2Diff {
-		// visit the upstream of each dst, mark address nodes with
-		// addrescapes, mark parameters unsafe
-		escapes := make([]uint16, len(e.dsts))
-		for i, n := range e.dsts {
-			escapes[i] = n.Esc
-		}
-		for _, n := range e.dsts {
-			e.escflood(n)
-		}
-		for {
-			done := true
-			for i, n := range e.dsts {
-				if n.Esc != escapes[i] {
-					done = false
-					if Debug['m'] > 2 {
-						Warnl(n.Pos, "Reflooding %v %S", e.curfnSym(n), n)
-					}
-					escapes[i] = n.Esc
-					e.escflood(n)
-				}
-			}
-			if done {
-				break
-			}
-		}
-	}
-
 	e.cleanup(all)
 
 	// for all top level functions, tag the typenodes corresponding to the param nodes
 	for _, n := range all {
 		if n.Op == ODCLFUNC {
-			e.esctag(n)
+			esctag(n)
 		}
 	}
-
-	if !esc2Live {
-		if Debug['m'] != 0 {
-			for _, n := range e.noesc {
-				if n.Esc == EscNone && n.Op != OADDR {
-					Warnl(n.Pos, "%v %S does not escape", e.curfnSym(n), n)
-				}
-			}
-		}
-	}
-
-	if !esc2Live || esc2Diff {
-		for _, x := range e.opts {
-			x.SetOpt(nil)
-		}
-	}
-
 }
 
 func (e *EscState) escfunc(fn *Node) {
@@ -439,51 +463,85 @@ func (e *EscState) escfunc(fn *Node) {
 	savefn := Curfn
 	Curfn = fn
 
-	if !esc2Live || esc2Diff {
-		for _, ln := range Curfn.Func.Dcl {
-			if ln.Op != ONAME {
-				continue
-			}
-			lnE := e.nodeEscState(ln)
-			switch ln.Class() {
-			// out params are in a loopdepth between the sink and all local variables
-			case PPARAMOUT:
-				lnE.Loopdepth = 0
-
-			case PPARAM:
-				lnE.Loopdepth = 1
-				if ln.Type != nil && !types.Haspointers(ln.Type) {
-					break
-				}
-				if Curfn.Nbody.Len() == 0 && !Curfn.Noescape() {
-					ln.Esc = EscHeap
-				} else {
-					ln.Esc = EscNone // prime for escflood later
-				}
-				e.noesc = append(e.noesc, ln)
-			}
+	for _, ln := range Curfn.Func.Dcl {
+		if ln.Op != ONAME {
+			continue
 		}
+		lnE := e.nodeEscState(ln)
+		switch ln.Class() {
+		// out params are in a loopdepth between the sink and all local variables
+		case PPARAMOUT:
+			lnE.Loopdepth = 0
 
-		// in a mutually recursive group we lose track of the return values
-		if e.recursive {
-			for _, ln := range Curfn.Func.Dcl {
-				if ln.Op == ONAME && ln.Class() == PPARAMOUT {
-					e.escflows(&e.theSink, ln, e.stepAssign(nil, ln, ln, "returned from recursive function"))
-				}
+		case PPARAM:
+			lnE.Loopdepth = 1
+			if ln.Type != nil && !types.Haspointers(ln.Type) {
+				break
+			}
+			if Curfn.Nbody.Len() == 0 && !Curfn.Noescape() {
+				ln.Esc = EscHeap
+			} else {
+				ln.Esc = EscNone // prime for escflood later
+			}
+			e.noesc = append(e.noesc, ln)
+		}
+	}
+
+	// in a mutually recursive group we lose track of the return values
+	if e.recursive {
+		for _, ln := range Curfn.Func.Dcl {
+			if ln.Op == ONAME && ln.Class() == PPARAMOUT {
+				e.escflows(&e.theSink, ln, e.stepAssign(nil, ln, ln, "returned from recursive function"))
 			}
 		}
 	}
 
 	e.escloopdepthlist(Curfn.Nbody)
 
-	e.stmts(fn.Nbody)
-	e.loopdepth = 1
-
-	if !esc2Live || esc2Diff {
-		e.esclist(Curfn.Nbody, Curfn)
-	}
+	e.esclist(Curfn.Nbody, Curfn)
 	Curfn = savefn
 	e.loopdepth = saveld
+}
+
+func (e *Escape) escfunc(fn *Node) {
+	if fn.Esc != EscFuncPlanned {
+		Fatalf("repeat escfunc %v", fn.Func.Nname)
+	}
+	fn.Esc = EscFuncStarted
+
+	inspectList(fn.Nbody, func(n *Node) bool {
+		switch n.Op {
+		case OLABEL:
+			if n.Sym == nil {
+				Fatalf("esc:label without label: %+v", n)
+			}
+
+			// Walk will complain about this label being already defined, but that's not until
+			// after escape analysis. in the future, maybe pull label & goto analysis out of walk and put before esc
+			n.Sym.Label = asTypesNode(&nonlooping)
+
+		case OGOTO:
+			if n.Sym == nil {
+				Fatalf("esc:goto without label: %+v", n)
+			}
+
+			// If we come past one that's uninitialized, this must be a (harmless) forward jump
+			// but if it's set to nonlooping the label must have preceded this goto.
+			if asNode(n.Sym.Label) == &nonlooping {
+				n.Sym.Label = asTypesNode(&looping)
+			}
+		}
+
+		return true
+	})
+
+	savefn := Curfn
+	Curfn = fn
+	e.loopdepth = 1
+
+	e.stmts(fn.Nbody)
+
+	Curfn = savefn
 }
 
 // Mark labels that have no backjumps to them as not increasing e.loopdepth.
@@ -542,7 +600,7 @@ func (e *EscState) esclist(l Nodes, parent *Node) {
 	}
 }
 
-func (e *EscState) isSliceSelfAssign(dst, src *Node) bool {
+func isSliceSelfAssign(dst, src *Node) bool {
 	// Detect the following special case.
 	//
 	//	func (b *Buffer) Foo() {
@@ -592,8 +650,8 @@ func (e *EscState) isSliceSelfAssign(dst, src *Node) bool {
 
 // isSelfAssign reports whether assignment from src to dst can
 // be ignored by the escape analysis as it's effectively a self-assignment.
-func (e *EscState) isSelfAssign(dst, src *Node) bool {
-	if e.isSliceSelfAssign(dst, src) {
+func isSelfAssign(dst, src *Node) bool {
+	if isSliceSelfAssign(dst, src) {
 		return true
 	}
 
@@ -615,7 +673,7 @@ func (e *EscState) isSelfAssign(dst, src *Node) bool {
 	case ODOT, ODOTPTR:
 		// Safe trailing accessors that are permitted to differ.
 	case OINDEX:
-		if e.mayAffectMemory(dst.Right) || e.mayAffectMemory(src.Right) {
+		if mayAffectMemory(dst.Right) || mayAffectMemory(src.Right) {
 			return false
 		}
 	default:
@@ -628,7 +686,7 @@ func (e *EscState) isSelfAssign(dst, src *Node) bool {
 
 // mayAffectMemory reports whether n evaluation may affect program memory state.
 // If expression can't affect it, then it can be safely ignored by the escape analysis.
-func (e *EscState) mayAffectMemory(n *Node) bool {
+func mayAffectMemory(n *Node) bool {
 	// We may want to use "memory safe" black list instead of general
 	// "side-effect free", which can include all calls and other ops
 	// that can affect allocate or change global state.
@@ -642,12 +700,12 @@ func (e *EscState) mayAffectMemory(n *Node) bool {
 
 	// Left+Right group.
 	case OINDEX, OADD, OSUB, OOR, OXOR, OMUL, OLSH, ORSH, OAND, OANDNOT, ODIV, OMOD:
-		return e.mayAffectMemory(n.Left) || e.mayAffectMemory(n.Right)
+		return mayAffectMemory(n.Left) || mayAffectMemory(n.Right)
 
 	// Left group.
 	case ODOT, ODOTPTR, ODEREF, OCONVNOP, OCONV, OLEN, OCAP,
 		ONOT, OBITNOT, OPLUS, ONEG, OALIGNOF, OOFFSETOF, OSIZEOF:
-		return e.mayAffectMemory(n.Left)
+		return mayAffectMemory(n.Left)
 
 	default:
 		return true
@@ -782,7 +840,7 @@ opSwitch:
 
 	case OAS, OASOP:
 		// Filter out some no-op assignments for escape analysis.
-		if e.isSelfAssign(n.Left, n.Right) {
+		if isSelfAssign(n.Left, n.Right) {
 			if Debug['m'] != 0 {
 				Warnl(n.Pos, "%v ignoring self-assignment in %S", e.curfnSym(n), n)
 			}
@@ -2213,7 +2271,7 @@ const unsafeUintptrTag = "unsafe-uintptr"
 // marked go:uintptrescapes.
 const uintptrEscapesTag = "uintptr-escapes"
 
-func (e *EscState) esctag(fn *Node) {
+func esctag(fn *Node) {
 	fn.Esc = EscFuncTagged
 
 	name := func(s *types.Sym, narg int) string {
