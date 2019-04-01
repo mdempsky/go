@@ -90,28 +90,28 @@ var esc2Live bool
 // flows to the result as a uintptr, but we mark it as esc:0x1 here.
 
 type Escape struct {
+	allLocs   []*EscLocation
+	escLocs   map[*Node]*EscLocation
 	loopdepth int
+
+	heapLoc  EscLocation
+	blankLoc EscLocation
 }
 
 func escapesComponent(all []*Node, recursive bool) {
-	var e Escape
-
 	for _, n := range all {
-		if n.Op == ODCLFUNC {
-			n.Esc = EscFuncPlanned
-			if Debug['m'] > 3 {
-				Dump("escAnalyze", n)
-			}
+		if n.Op != ODCLFUNC {
+			Fatalf("unexpected node: %v", n)
 		}
 	}
 
-	e.setup(all)
+	var e Escape
 
-	// flow-analyze functions
 	for _, n := range all {
-		if n.Op == ODCLFUNC {
-			e.escfunc(n)
-		}
+		e.initFunc(n)
+	}
+	for _, n := range all {
+		e.walkFunc(n)
 	}
 
 	e.flood(all)
@@ -126,47 +126,43 @@ func escapesComponent(all []*Node, recursive bool) {
 	}
 }
 
-func (e *Escape) setup(all []*Node) {
+func (e *Escape) initFunc(fn *Node) {
+	if fn.Esc != EscFuncUnknown {
+		Fatalf("wacky")
+	}
+	fn.Esc = EscFuncPlanned
+	if Debug['m'] > 3 {
+		Dump("escAnalyze", fn)
+	}
+
+	Curfn = fn
 	e.loopdepth = 1
-	for _, fn := range all {
-		Curfn = fn
-		for _, dcl := range fn.Func.Dcl {
-			if dcl.Op == ONAME {
-				loc := e.newLoc(dcl)
-				loc.transient = false
-				if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
-					loc.paramEsc = EscHeap
-				}
+	for _, dcl := range fn.Func.Dcl {
+		if dcl.Op == ONAME {
+			loc := e.newLoc(dcl)
+			loc.transient = false
+
+			// TODO(mdempsky): This should probably be handled elsewhere.
+			if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
+				loc.paramEsc = EscHeap
 			}
 		}
 	}
 	Curfn = nil
 }
 
-func (e *Escape) escfunc(fn *Node) {
-	if fn.Esc != EscFuncPlanned {
-		Fatalf("repeat escfunc %v", fn.Func.Nname)
-	}
+func (e *Escape) walkFunc(fn *Node) {
 	fn.Esc = EscFuncStarted
 
+	// Identify labels that mark the head of an unstructured loop.
 	inspectList(fn.Nbody, func(n *Node) bool {
 		switch n.Op {
 		case OLABEL:
-			if n.Sym == nil {
-				Fatalf("esc:label without label: %+v", n)
-			}
-
-			// Walk will complain about this label being already defined, but that's not until
-			// after escape analysis. in the future, maybe pull label & goto analysis out of walk and put before esc
 			n.Sym.Label = asTypesNode(&nonlooping)
 
 		case OGOTO:
-			if n.Sym == nil {
-				Fatalf("esc:goto without label: %+v", n)
-			}
-
-			// If we come past one that's uninitialized, this must be a (harmless) forward jump
-			// but if it's set to nonlooping the label must have preceded this goto.
+			// If we visited the label before the goto,
+			// then this is a looping label.
 			if asNode(n.Sym.Label) == &nonlooping {
 				n.Sym.Label = asTypesNode(&looping)
 			}
@@ -229,8 +225,9 @@ func (e *Escape) stmt(n *Node) {
 				fmt.Printf("%v: %v looping label\n", linestr(lineno), n)
 			}
 			e.loopdepth++
+		default:
+			Fatalf("label missing tag")
 		}
-
 		n.Sym.Label = nil
 
 	case OIF:
@@ -380,7 +377,7 @@ func (e *Escape) valueSkipInit(k EscHole, n *Node) {
 	}()
 
 	if !types.Haspointers(n.Type) && !isReflectHeaderDataField(n) && k.derefs >= 0 {
-		if debugLevel(2) && k.dst != &BlankLoc {
+		if debugLevel(2) && k.dst != &e.blankLoc {
 			Warnl(n.Pos, "discarding value of non-pointer %v", n)
 		}
 		k = e.discardHole()
@@ -634,7 +631,7 @@ func (e *Escape) addr(n *Node) EscHole {
 	}
 
 	if !types.Haspointers(n.Type) && !isReflectHeaderDataField(n) {
-		if debugLevel(2) && k.dst != &BlankLoc {
+		if debugLevel(2) && k.dst != &e.blankLoc {
 			Warnl(n.Pos, "discarding assignment to non-pointer destination %v", n)
 		}
 		k = e.discardHole()
@@ -978,7 +975,7 @@ func (k EscHole) addr(where *Node, why string) EscHole  { return k.shift(-1).not
 
 func (e *Escape) dcl(n *Node) EscHole {
 	loc := e.oldLoc(n)
-	loc.loopDepth = int(e.loopdepth)
+	loc.loopDepth = e.loopdepth
 	return loc.asHole()
 }
 
@@ -1019,10 +1016,9 @@ func (e *Escape) newLoc(n *Node) *EscLocation {
 	n = normalize(n)
 
 	// TODO(mdempsky): Validate n.Op?
-	if _, ok := escLocs[n]; ok {
-		if debugLevel(1) {
-			Warnl(n.Pos, "%v already has a location", n)
-		}
+	if _, ok := e.escLocs[n]; ok {
+		// TODO(mdempsky): Make Fatalf.
+		Warnl(n.Pos, "%v already has a location", n)
 	}
 	if debugLevel(1) {
 		var pos src.XPos
@@ -1034,14 +1030,18 @@ func (e *Escape) newLoc(n *Node) *EscLocation {
 	loc := &EscLocation{
 		n:         n,
 		curfn:     Curfn,
-		loopDepth: int(e.loopdepth),
+		loopDepth: e.loopdepth,
 		transient: true,
 	}
-	allLocs = append(allLocs, loc)
+	e.allLocs = append(e.allLocs, loc)
 	if n != nil {
-		escLocs[n] = loc
+		if e.escLocs == nil {
+			e.escLocs = map[*Node]*EscLocation{}
+		}
+		e.escLocs[n] = loc
 
 		// TODO(mdempsky): Perhaps set n.Esc and then just return &HeapLoc?
+		// TODO(mdempsky): Cleanup this mess.
 		if /*n.Esc != EscHeap &&*/ n.Type != nil && !loc.isName(PPARAM) && !loc.isName(PPARAMOUT) &&
 			(n.Type.Width > maxStackVarSize ||
 				(n.Op == ONEW || n.Op == OPTRLIT) && n.Type.Elem().Width >= maxImplicitStackVarSize ||
@@ -1056,37 +1056,36 @@ func (e *Escape) newLoc(n *Node) *EscLocation {
 }
 
 func (e *Escape) oldLoc(n *Node) *EscLocation {
+	if n.isBlank() {
+		return &e.blankLoc
+	}
 	n = normalize(n)
 	if n == nil {
 		Fatalf("can't get old location for nil pointer")
 	}
-	loc, ok := escLocs[n]
+	loc, ok := e.escLocs[n]
 	if !ok {
-		// TODO(mdempsky): Fix ".this".
-		if debugLevel(1) && !(n.Op == ONAME && n.Sym.Name == ".this") {
-			Warnl(n.Pos, "%v (%p) doesn't have a location yet", n, n)
-		}
+		// TODO(mdempsky): Make Fatalf.
+		Warnl(n.Pos, "%v (%p) doesn't have a location yet", n, n)
 		return e.newLoc(n)
 	}
 	return loc
 }
-
-var (
-	HeapLoc  EscLocation
-	BlankLoc EscLocation
-)
 
 func (l *EscLocation) asHole() EscHole {
 	return EscHole{dst: l}
 }
 
 func (l *EscLocation) String() string {
-	switch l {
-	case &HeapLoc:
-		return "[heap]"
-	case &BlankLoc:
-		return "[blank]"
-	}
+	// TODO(mdempsky): Restore?
+	/*
+		switch l {
+		case &HeapLoc:
+			return "[heap]"
+		case &BlankLoc:
+			return "[blank]"
+		}
+	*/
 
 	return fmt.Sprintf("%v", l.n)
 }
@@ -1101,7 +1100,7 @@ func (e *Escape) flow(k EscHole, src_ *EscLocation) {
 	}
 
 	dst := k.dst
-	if dst == &BlankLoc {
+	if dst == &e.blankLoc {
 		if debugLevel(2) {
 			Warnl(pos, "esc2: %v <~ %v, derefs=%v (dropped)", dst, src_, k.derefs)
 		}
@@ -1120,8 +1119,8 @@ func (e *Escape) flow(k EscHole, src_ *EscLocation) {
 	}
 }
 
-func (e *Escape) heapHole() EscHole    { return HeapLoc.asHole() }
-func (e *Escape) discardHole() EscHole { return BlankLoc.asHole() }
+func (e *Escape) heapHole() EscHole    { return e.heapLoc.asHole() }
+func (e *Escape) discardHole() EscHole { return e.blankLoc.asHole() }
 
 func (e *Escape) resultHoles() []EscHole {
 	var ks []EscHole
@@ -1131,19 +1130,16 @@ func (e *Escape) resultHoles() []EscHole {
 	return ks
 }
 
-var escLocs = map[*Node]*EscLocation{}
-var allLocs []*EscLocation
-
 func (e *Escape) flood(all []*Node) {
 	var walkgen uint32
 
-	for _, loc := range allLocs {
+	for _, loc := range e.allLocs {
 		walkgen++
 		e.walk(loc, walkgen)
 	}
 
 	walkgen++
-	e.walk(&HeapLoc, walkgen)
+	e.walk(&e.heapLoc, walkgen)
 }
 
 func (e *Escape) walk(root *EscLocation, walkgen uint32) {
@@ -1174,7 +1170,7 @@ func (e *Escape) walk(root *EscLocation, walkgen uint32) {
 
 		// p's address flows to root. If root outlives
 		// p, then p needs to be heap allocated.
-		if root.outlives(p) {
+		if e.outlives(root, p) {
 			if addressOf && !p.escapes {
 				if debugLevel(1) {
 					var pos src.XPos
@@ -1186,8 +1182,8 @@ func (e *Escape) walk(root *EscLocation, walkgen uint32) {
 				p.escapes = true
 
 				// TODO(mdempsky): This is clumsy.
-				if root != &HeapLoc {
-					e.flow(HeapLoc.asHole(), p)
+				if root != &e.heapLoc {
+					e.flow(e.heapLoc.asHole(), p)
 				}
 			}
 
@@ -1225,9 +1221,9 @@ func (l *EscLocation) isName(c Class) bool {
 
 // outlives reports whether values stored in l may survive beyond
 // other's lifetime if stack allocated.
-func (l *EscLocation) outlives(other *EscLocation) bool {
+func (e *Escape) outlives(l, other *EscLocation) bool {
 	// The heap outlives everything.
-	if l == &HeapLoc {
+	if l == &e.heapLoc {
 		return true
 	}
 
@@ -1330,7 +1326,7 @@ func dddLen(n *Node) int {
 }
 
 func (e *Escape) cleanup(all []*Node) {
-	for n, loc := range escLocs {
+	for n, loc := range e.escLocs {
 		switch n.Op {
 		case OTYPESW:
 			continue
@@ -1386,12 +1382,6 @@ func (e *Escape) cleanup(all []*Node) {
 			}
 		}
 	}
-
-	escLocs = map[*Node]*EscLocation{}
-	allLocs = nil
-
-	HeapLoc = EscLocation{}
-	BlankLoc = EscLocation{}
 }
 
 func finalizeEsc(esc uint16) uint16 {
