@@ -1907,10 +1907,6 @@ func (e *EscState) escwalkBody(level Level, dst *Node, src *Node, step *EscStep,
 		// Treat a captured closure variable as equivalent to the
 		// original variable.
 		if src.IsClosureVar() {
-			if leaks && Debug['m'] != 0 {
-				Warnl(src.Pos, "leaking closure reference %S", src)
-				step.describe(src)
-			}
 			e.escwalk(level, dst, src.Name.Defn, e.stepWalk(dst, src.Name.Defn, "closure-var", step))
 		}
 
