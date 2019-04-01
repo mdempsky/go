@@ -142,7 +142,7 @@ func (e *Escape) stmt(n *Node) {
 			e.loopdepth++
 		}
 
-		// n.Sym.Label = nil
+		n.Sym.Label = nil
 
 	case OIF:
 		e.discard(n.Left)
@@ -251,14 +251,8 @@ func (e *Escape) stmt(n *Node) {
 		e.call(e.addrs(n.List), n.Rlist.First(), nil)
 	case ORETURN:
 		ks := e.resultHoles()
-		if len(ks) > 1 && n.List.Len() == 1 {
-			Fatalf("weird return")
-			// TODO(mdempsky): Handle implicit conversions.
-			e.call(ks, n.List.First(), nil)
-		} else {
-			for i, v := range n.List.Slice() {
-				e.value(ks[i], v)
-			}
+		for i, v := range n.List.Slice() {
+			e.value(ks[i], v)
 		}
 	case OCALLFUNC, OCALLMETH, OCALLINTER, OCLOSE, OCOPY, ODELETE, OPANIC, OPRINT, OPRINTN, ORECOVER:
 		e.call(nil, n, nil)
@@ -272,6 +266,7 @@ func (e *Escape) stmt(n *Node) {
 }
 
 func (e *Escape) stmts(l Nodes) {
+	// TODO(mdempsky): Preserve and restore e.loopdepth?
 	for _, n := range l.Slice() {
 		e.stmt(n)
 	}
