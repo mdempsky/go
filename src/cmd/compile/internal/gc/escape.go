@@ -93,6 +93,97 @@ type Escape struct {
 	loopdepth int
 }
 
+func escapesComponent(all []*Node, recursive bool) {
+	var e Escape
+
+	for _, n := range all {
+		if n.Op == ODCLFUNC {
+			n.Esc = EscFuncPlanned
+			if Debug['m'] > 3 {
+				Dump("escAnalyze", n)
+			}
+		}
+	}
+
+	e.setup(all)
+
+	// flow-analyze functions
+	for _, n := range all {
+		if n.Op == ODCLFUNC {
+			e.escfunc(n)
+		}
+	}
+
+	e.flood(all)
+
+	e.cleanup(all)
+
+	// for all top level functions, tag the typenodes corresponding to the param nodes
+	for _, n := range all {
+		if n.Op == ODCLFUNC {
+			esctag(n)
+		}
+	}
+}
+
+func (e *Escape) setup(all []*Node) {
+	e.loopdepth = 1
+	for _, fn := range all {
+		Curfn = fn
+		for _, dcl := range fn.Func.Dcl {
+			if dcl.Op == ONAME {
+				loc := e.newLoc(dcl)
+				loc.transient = false
+				if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
+					loc.paramEsc = EscHeap
+				}
+			}
+		}
+	}
+	Curfn = nil
+}
+
+func (e *Escape) escfunc(fn *Node) {
+	if fn.Esc != EscFuncPlanned {
+		Fatalf("repeat escfunc %v", fn.Func.Nname)
+	}
+	fn.Esc = EscFuncStarted
+
+	inspectList(fn.Nbody, func(n *Node) bool {
+		switch n.Op {
+		case OLABEL:
+			if n.Sym == nil {
+				Fatalf("esc:label without label: %+v", n)
+			}
+
+			// Walk will complain about this label being already defined, but that's not until
+			// after escape analysis. in the future, maybe pull label & goto analysis out of walk and put before esc
+			n.Sym.Label = asTypesNode(&nonlooping)
+
+		case OGOTO:
+			if n.Sym == nil {
+				Fatalf("esc:goto without label: %+v", n)
+			}
+
+			// If we come past one that's uninitialized, this must be a (harmless) forward jump
+			// but if it's set to nonlooping the label must have preceded this goto.
+			if asNode(n.Sym.Label) == &nonlooping {
+				n.Sym.Label = asTypesNode(&looping)
+			}
+		}
+
+		return true
+	})
+
+	savefn := Curfn
+	Curfn = fn
+	e.loopdepth = 1
+
+	e.stmts(fn.Nbody)
+
+	Curfn = savefn
+}
+
 func (e *Escape) stmt(n *Node) {
 	if n == nil {
 		return
@@ -1043,23 +1134,6 @@ func (e *Escape) resultHoles() []EscHole {
 var escLocs = map[*Node]*EscLocation{}
 var allLocs []*EscLocation
 
-func (e *Escape) setup(all []*Node) {
-	e.loopdepth = 1
-	for _, fn := range all {
-		Curfn = fn
-		for _, dcl := range fn.Func.Dcl {
-			if dcl.Op == ONAME {
-				loc := e.newLoc(dcl)
-				loc.transient = false
-				if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
-					loc.paramEsc = EscHeap
-				}
-			}
-		}
-	}
-	Curfn = nil
-}
-
 func (e *Escape) flood(all []*Node) {
 	var walkgen uint32
 
@@ -1318,33 +1392,6 @@ func (e *Escape) cleanup(all []*Node) {
 
 	HeapLoc = EscLocation{}
 	BlankLoc = EscLocation{}
-}
-
-// escWorseThan reports whether e1 is a "worse" escape analysis result
-// than e2; that is, whether it means more stuff escapes.
-func escWorseThan(e1, e2 uint16) bool {
-	if e2 == EscHeap {
-		// Nothing is worse than always escaping to heap.
-		return false
-	}
-	if e1 == EscHeap {
-		// Escaping to heap is worse than anything but itself.
-		return true
-	}
-
-	if (e1&EscContentEscapes) != 0 && (e2&EscContentEscapes) == 0 {
-		return true
-	}
-
-	for i := 0; i < 16; i++ {
-		x1 := int(e1>>uint(EscReturnBits+i*bitsPerOutputInTag)) & int(bitsMaskForTag)
-		x2 := int(e2>>uint(EscReturnBits+i*bitsPerOutputInTag)) & int(bitsMaskForTag)
-		if x1 != 0 && x1 < x2 {
-			return true
-		}
-	}
-
-	return false
 }
 
 func finalizeEsc(esc uint16) uint16 {

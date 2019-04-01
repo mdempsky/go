@@ -414,39 +414,6 @@ func escAnalyze(all []*Node, recursive bool) {
 	}
 }
 
-func escapesComponent(all []*Node, recursive bool) {
-	var e Escape
-
-	for _, n := range all {
-		if n.Op == ODCLFUNC {
-			n.Esc = EscFuncPlanned
-			if Debug['m'] > 3 {
-				Dump("escAnalyze", n)
-			}
-		}
-	}
-
-	e.setup(all)
-
-	// flow-analyze functions
-	for _, n := range all {
-		if n.Op == ODCLFUNC {
-			e.escfunc(n)
-		}
-	}
-
-	e.flood(all)
-
-	e.cleanup(all)
-
-	// for all top level functions, tag the typenodes corresponding to the param nodes
-	for _, n := range all {
-		if n.Op == ODCLFUNC {
-			esctag(n)
-		}
-	}
-}
-
 func (e *EscState) escfunc(fn *Node) {
 	if fn.Esc != EscFuncPlanned {
 		Fatalf("repeat escfunc %v", fn.Func.Nname)
@@ -496,47 +463,6 @@ func (e *EscState) escfunc(fn *Node) {
 	e.esclist(Curfn.Nbody, Curfn)
 	Curfn = savefn
 	e.loopdepth = saveld
-}
-
-func (e *Escape) escfunc(fn *Node) {
-	if fn.Esc != EscFuncPlanned {
-		Fatalf("repeat escfunc %v", fn.Func.Nname)
-	}
-	fn.Esc = EscFuncStarted
-
-	inspectList(fn.Nbody, func(n *Node) bool {
-		switch n.Op {
-		case OLABEL:
-			if n.Sym == nil {
-				Fatalf("esc:label without label: %+v", n)
-			}
-
-			// Walk will complain about this label being already defined, but that's not until
-			// after escape analysis. in the future, maybe pull label & goto analysis out of walk and put before esc
-			n.Sym.Label = asTypesNode(&nonlooping)
-
-		case OGOTO:
-			if n.Sym == nil {
-				Fatalf("esc:goto without label: %+v", n)
-			}
-
-			// If we come past one that's uninitialized, this must be a (harmless) forward jump
-			// but if it's set to nonlooping the label must have preceded this goto.
-			if asNode(n.Sym.Label) == &nonlooping {
-				n.Sym.Label = asTypesNode(&looping)
-			}
-		}
-
-		return true
-	})
-
-	savefn := Curfn
-	Curfn = fn
-	e.loopdepth = 1
-
-	e.stmts(fn.Nbody)
-
-	Curfn = savefn
 }
 
 // Mark labels that have no backjumps to them as not increasing e.loopdepth.
