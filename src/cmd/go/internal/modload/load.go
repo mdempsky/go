@@ -339,7 +339,7 @@ func loadAll(testAll bool) []string {
 	if !testAll {
 		loaded.testRoots = true
 	}
-	all := TargetPackages()
+	all := TargetPackages("...")
 	loaded.load(func() []string { return all })
 	WriteGoMod()
 
@@ -357,10 +357,11 @@ func loadAll(testAll bool) []string {
 // Only "ignore" and malformed build tag requirements are considered false.
 var anyTags = map[string]bool{"*": true}
 
-// TargetPackages returns the list of packages in the target (top-level) module,
-// under all build tag settings.
-func TargetPackages() []string {
-	return matchPackages("...", anyTags, false, []module.Version{Target})
+// TargetPackages returns the list of packages in the target (top-level) module
+// matching pattern, which may be relative to the working directory, under all
+// build tag settings.
+func TargetPackages(pattern string) []string {
+	return matchPackages(pattern, anyTags, false, []module.Version{Target})
 }
 
 // BuildList returns the module build list,
@@ -547,6 +548,9 @@ func (ld *loader) load(roots func() []string) {
 		}
 		for _, pkg := range ld.pkgs {
 			if err, ok := pkg.err.(*ImportMissingError); ok && err.Module.Path != "" {
+				if err.newMissingVersion != "" {
+					base.Fatalf("go: %s: package provided by %s at latest version %s but not at required version %s", pkg.stackText(), err.Module.Path, err.Module.Version, err.newMissingVersion)
+				}
 				if added[pkg.path] {
 					base.Fatalf("go: %s: looping trying to add package", pkg.stackText())
 				}
