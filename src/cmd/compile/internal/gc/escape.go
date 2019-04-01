@@ -1098,6 +1098,7 @@ func (e *EscState) walk(root *EscLocation) {
 		if addressOf {
 			base = 0
 
+			// TODO(mdempsky): Explain this.
 			if !root.transient {
 				p.transient = false
 			}
