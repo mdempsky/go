@@ -810,10 +810,6 @@ func (e *Escape) call(ks []EscHole, call, where *Node) {
 		for i := 0; i < nva; i++ {
 			paramKs = append(paramKs, dddK)
 		}
-
-		if nva == 0 {
-			call.Esc = 42 // flag for EscState.cleanup
-		}
 	}
 
 	if call.Op == OCALLFUNC {
