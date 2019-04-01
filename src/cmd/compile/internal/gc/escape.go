@@ -68,16 +68,11 @@ import (
 // &r, then r's address leaks to p. If p outlives r, then r must be
 // heap allocated.
 
-// If oldEscCompat is true, we try to be more compatible with esc.go's
-// quirks.
-// TODO(mdempsky): Remove.
-const oldEscCompat = false
-
 // If esc2Live is true, then esc2.go drives escape analysis instead of
 // esc.go.
-const esc2Live = true
+var esc2Live bool
 
-const esc2Diff = true
+const esc2Diff = false
 
 // TODO(mdempsky): Document how to write and maintain code.
 //
@@ -326,7 +321,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OADDR:
-		e.notTracked(n, "address-of")
+		e.notTracked(k, n, "address-of")
 		e.value(k.addr(n, "address-of"), n.Left) // "address-of"
 	case ODEREF:
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
@@ -367,7 +362,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		if !n.Left.Type.IsInterface() && !isdirectiface(n.Left.Type) {
 			k = e.spill(k, n)
 		} else {
-			e.notTracked(n, "direct iface")
+			e.notTracked(k, n, "direct iface")
 		}
 		e.value(k.note(n, "interface-converted"), n.Left)
 
@@ -385,7 +380,7 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Left)
 		e.discard(n.Right)
 	case OMAKECHAN:
-		e.notTracked(n, "make chan")
+		e.notTracked(k, n, "make chan")
 		e.discard(n.Left)
 	case OMAKEMAP:
 		e.spill(k, n)
@@ -566,7 +561,7 @@ func (e *EscState) addrs(l Nodes) []EscHole {
 
 func (e *EscState) assign(dst, src *Node, why string, where *Node) {
 	// Filter out some no-op assignments for escape analysis.
-	ignore := (!oldEscCompat || why == "assign") && dst != nil && src != nil && e.isSelfAssign(dst, src)
+	ignore := dst != nil && src != nil && e.isSelfAssign(dst, src)
 	if ignore && Debug['m'] != 0 {
 		Warnl(where.Pos, "%v ignoring self-assignment in %S", funcSym(Curfn), where)
 	}
@@ -592,7 +587,7 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 	switch call.Op {
 	case OCALLFUNC:
 		fn = call.Left
-		if !oldEscCompat && fn.Op == OCLOSURE {
+		if fn.Op == OCLOSURE {
 			fn = fn.Func.Closure.Func.Nname
 		}
 	case OCALLMETH:
@@ -684,11 +679,13 @@ func (e *EscState) call(ks []EscHole, call, where *Node) {
 
 		switch call.Op {
 		case OAPPEND:
-			// Appendee slice flows to result. Also, in
-			// esc.go compat mode, we flow its elements to
-			// the heap.
+			// Appendee slice may flow directly to the
+			// result, if it has enough
+			// capacity. Alternatively, a new heap slice
+			// might be allocated, and all slice elements
+			// might flow to heap.
 			paramKs[0] = e.teeHole(paramKs[0], ks[0])
-			if oldEscCompat && types.Haspointers(args[0].Type.Elem()) {
+			if types.Haspointers(args[0].Type.Elem()) {
 				paramKs[0] = e.teeHole(paramKs[0], e.heapHole().deref(call, "appendee slice"))
 			}
 
@@ -1058,10 +1055,6 @@ func (e *EscState) setup(all []*Node) {
 				loc.transient = false
 				if dcl.Class() == PPARAM && fn.Nbody.Len() == 0 && !fn.Noescape() {
 					loc.paramEsc = EscHeap
-				}
-
-				if oldEscCompat && e.recursive && dcl.Class() == PPARAMOUT {
-					e.flow(e.heapHole(), loc)
 				}
 			}
 		}
@@ -1453,7 +1446,10 @@ func escWorseThan(e1, e2 uint16) bool {
 	return false
 }
 
-func (e *EscState) notTracked(n *Node, why string) {
+func (e *EscState) notTracked(k EscHole, n *Node, why string) {
+	e.spill(k, n)
+	return
+
 	if esc2Live && Debug['m'] != 0 {
 		Warnl(n.Pos, "%S %S not tracked (%s)", funcSym(Curfn), n, why)
 	}
