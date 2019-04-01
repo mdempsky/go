@@ -1094,13 +1094,20 @@ func (e *EscState) walk(root *EscLocation) {
 			Warnl(src.NoXPos, "esc2: visiting %v (%p) at distance %v from root %v; %v edges", p, p, base, root, len(p.edges))
 		}
 
-		if base < 0 {
+		addressOf := base < 0
+		if addressOf {
 			base = 0
 
-			// p's address flows to root. If root outlives
-			// p, then p needs to be heap allocated.
-			if root.outlives(p) {
-				if !p.escapes && debugLevel(1) {
+			if !root.transient {
+				p.transient = false
+			}
+		}
+
+		// p's address flows to root. If root outlives
+		// p, then p needs to be heap allocated.
+		if root.outlives(p) {
+			if addressOf && !p.escapes {
+				if debugLevel(1) {
 					var pos src.XPos
 					if p.n != nil {
 						pos = p.n.Pos
@@ -1115,22 +1122,18 @@ func (e *EscState) walk(root *EscLocation) {
 				}
 			}
 
-			if !root.transient {
-				p.transient = false
+			// p's value flows to root. If p is a function
+			// parameter and root is the heap or a corresponding
+			// result parameter, then record that value flow for
+			// tagging the function later.
+			if p.isName(PPARAM) {
+				vi := -1
+				if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
+					// TODO(mdempsky): Eliminate dependency on Vargen here.
+					vi = int(root.n.Name.Vargen) - 1
+				}
+				p.leak(vi, base)
 			}
-		}
-
-		// p's value flows to root. If p is a function
-		// parameter and root is the heap or a corresponding
-		// result parameter, then record that value flow for
-		// tagging the function later.
-		if p.isName(PPARAM) && root.outlives(p) {
-			vi := -1
-			if root.isName(PPARAMOUT) && root.n.Name.Curfn == p.n.Name.Curfn {
-				// TODO(mdempsky): Eliminate dependency on Vargen here.
-				vi = int(root.n.Name.Vargen) - 1
-			}
-			p.leak(vi, base)
 		}
 
 		for _, edge := range p.edges {
