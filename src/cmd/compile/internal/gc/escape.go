@@ -321,7 +321,6 @@ func (e *EscState) valueSkipInit(k EscHole, n *Node) {
 		e.discard(n.Right)
 
 	case OADDR:
-		e.notTracked(k, n, "address-of")
 		e.value(k.addr(n, "address-of"), n.Left) // "address-of"
 	case ODEREF:
 		e.value(k.deref(n, "indirection"), n.Left) // "indirection"
