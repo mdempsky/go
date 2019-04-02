@@ -1219,20 +1219,16 @@ func (e *Escape) outlives(l, other *EscLocation) bool {
 
 	// Result parameters flow to the heap, so in effect they
 	// outlive any other location.
-	//
-	// TODO(mdempsky): It should be possible to optimize
-	// directly-called function literal result parameters, but
-	// it's probably not worth the complexity. For example:
-	//
-	//    var u int  // could be stack allocated
-	//    *(func() *int { return &u }()) = 42
-	//
-	//    func(p *int) {
-	//        *p = 42
-	//    }(func() *int {
-	//        return new(int)  // must be heap allocated
-	//    }())
 	if l.isName(PPARAMOUT) {
+		// Exception: Directly called closures can return locations allocated
+		// outside of them without forcing them to the heap. For example:
+		//
+		//    var u int  // allocate on stack
+		//    *(func() *int { return &u }()) = 42
+		if containsClosure(other.curfn, l.curfn) && l.curfn.Func.Closure.Func.Top&ctxCallee != 0 {
+			return false
+		}
+
 		return true
 	}
 

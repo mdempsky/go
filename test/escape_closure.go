@@ -43,8 +43,7 @@ func ClosureCallArgs3() {
 }
 
 func ClosureCallArgs4() {
-	// BAD: x should not leak here
-	x := 0                  // ERROR "moved to heap: x"
+	x := 0
 	_ = func(p *int) *int { // ERROR "leaking param: p to result ~r1" "func literal does not escape"
 		return p
 	}(&x)
@@ -111,8 +110,7 @@ func ClosureCallArgs11() {
 }
 
 func ClosureCallArgs12() {
-	// BAD: x should not leak
-	x := 0                    // ERROR "moved to heap: x"
+	x := 0
 	defer func(p *int) *int { // ERROR "leaking param: p to result ~r1" "func literal does not escape"
 		return p
 	}(&x)
@@ -126,7 +124,7 @@ func ClosureCallArgs13() {
 }
 
 func ClosureCallArgs14() {
-	x := 0 // ERROR "moved to heap: x"
+	x := 0
 	p := &x
 	_ = func(p **int) *int { // ERROR "leaking param: p to result ~r1 level=1" "func literal does not escape"
 		return *p
@@ -147,8 +145,7 @@ func ClosureLeak1(s string) string { // ERROR "ClosureLeak1 s does not escape"
 }
 
 // See #14409 -- returning part of captured var leaks it.
-// TODO(mdempsky): Would be better to leak to ~r1 instead of heap.
-func ClosureLeak1a(a ...string) string { // ERROR "leaking param content: a"
+func ClosureLeak1a(a ...string) string { // ERROR "leaking param: a to result ~r1 level=1$"
 	return func() string { // ERROR "ClosureLeak1a func literal does not escape"
 		return a[0]
 	}()
@@ -159,7 +156,6 @@ func ClosureLeak2(s string) string { // ERROR "ClosureLeak2 s does not escape"
 	c := ClosureLeak2a(t) // ERROR "ClosureLeak2 ... argument does not escape"
 	return c
 }
-// TODO(mdempsky): Would be better to leak to ~r1 instead of heap.
 func ClosureLeak2a(a ...string) string { // ERROR "leaking param content: a"
 	return ClosureLeak2b(func() string { // ERROR "ClosureLeak2a func literal does not escape"
 		return a[0]
