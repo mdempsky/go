@@ -1255,11 +1255,29 @@ func (e *Escape) outlives(l, other *EscLocation) bool {
 	//    func() {
 	//        l = new(int)
 	//    }
-	if strings.HasPrefix(other.curfn.Func.Nname.Sym.Name, l.curfn.Func.Nname.Sym.Name+".") {
+	if containsClosure(l.curfn, other.curfn) {
 		return true
 	}
 
 	return false
+}
+
+// containsClosure reports whether c is a closure contained within f.
+func containsClosure(f, c *Node) bool {
+	if f.Op != ODCLFUNC || c.Op != ODCLFUNC {
+		Fatalf("bad containsClosure: %v, %v", f, c)
+	}
+
+	// Common case.
+	if f == c {
+		return false
+	}
+
+	// Closures within function Foo are named like "Foo.funcN..."
+	// TODO(mdempsky): Better way to recognize this.
+	fn := f.Func.Nname.Sym.Name
+	cn := c.Func.Nname.Sym.Name
+	return len(cn) > len(fn) && cn[:len(fn)] == fn && cn[len(fn)] == '.'
 }
 
 func (l *EscLocation) leak(ri, derefs int) {
