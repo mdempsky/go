@@ -26,8 +26,8 @@ func (e ent) String() string {
 }
 
 //go:noinline
-func foo(ops closure, j int) (err fmt.Stringer) { // ERROR "leaking param: ops$" "leaking param: ops to result err level=0$"
-	enqueue := func(i int) fmt.Stringer { // ERROR "func literal escapes to heap$"
+func foo(ops closure, j int) (err fmt.Stringer) { // ERROR "foo ops does not escape"
+	enqueue := func(i int) fmt.Stringer { // ERROR "foo func literal does not escape"
 		return ops(i, j) // ERROR "ops\(i, j\) escapes to heap$"
 	}
 	err = enqueue(4)
@@ -39,7 +39,7 @@ func foo(ops closure, j int) (err fmt.Stringer) { // ERROR "leaking param: ops$"
 
 func main() {
 	// 3 identical functions, to get different escape behavior.
-	f := func(i, j int) ent { // ERROR "func literal escapes to heap$"
+	f := func(i, j int) ent { // ERROR "main func literal does not escape"
 		return ent(i + j)
 	}
 	i := foo(f, 3).(ent)

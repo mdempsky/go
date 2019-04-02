@@ -36,7 +36,7 @@ func walk(np **Node) int { // ERROR "leaking param content: np"
 	wl := walk(&n.left)
 	wr := walk(&n.right)
 	if wl < wr {
-		n.left, n.right = n.right, n.left
+		n.left, n.right = n.right, n.left // ERROR "ignoring self-assignment"
 		wl, wr = wr, wl
 	}
 	*np = n

@@ -415,7 +415,7 @@ func f(x *Node) { // ERROR "leaking param content: x"
 	Sink = &Node{x.p} // ERROR "&Node literal escapes to heap"
 }
 
-func g(x *Node) *Node { // ERROR "leaking param: x to result ~r1 level=0"
+func g(x *Node) *Node { // ERROR "leaking param content: x"
 	return &Node{x.p} // ERROR "&Node literal escapes to heap"
 }
 

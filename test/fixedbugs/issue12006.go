@@ -23,7 +23,7 @@ func FooNx(x *int, vals ...*int) (s int) { // ERROR "leaking param: x" "leaking 
 
 var sink []*int
 
-func FooNy(x *int, vals ...*int) (s int) { // ERROR "leaking param: x" "leaking param: vals" "leaking param content: vals"
+func FooNy(x *int, vals ...*int) (s int) { // ERROR "leaking param: x" "leaking param: vals"
 	vals = append(vals, x)
 	sink = vals
 	return FooN(vals...)

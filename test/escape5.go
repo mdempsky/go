@@ -129,7 +129,7 @@ type T2 struct {
 	Y *T1
 }
 
-func f8(p *T1) (k T2) { // ERROR "leaking param: p to result k" "leaking param: p"
+func f8(p *T1) (k T2) { // ERROR "leaking param: p$"
 	if p == nil {
 		k = T2{}
 		return

@@ -149,7 +149,7 @@ func field16() {
 	var x X
 	// BAD: &i should not escape
 	x.p1 = &i
-	var iface interface{} = x // ERROR "x escapes to heap"
+	var iface interface{} = x // ERROR "field16 x does not escape"
 	x1 := iface.(X)
 	sink = x1.p2 // ERROR "x1\.p2 escapes to heap"
 }
@@ -158,7 +158,7 @@ func field17() {
 	i := 0 // ERROR "moved to heap: i$"
 	var x X
 	x.p1 = &i
-	var iface interface{} = x // ERROR "x escapes to heap"
+	var iface interface{} = x // ERROR "field17 x does not escape"
 	x1 := iface.(X)
 	sink = x1.p1 // ERROR "x1\.p1 escapes to heap"
 }
@@ -168,7 +168,7 @@ func field18() {
 	var x X
 	// BAD: &i should not escape
 	x.p1 = &i
-	var iface interface{} = x // ERROR "x escapes to heap"
+	var iface interface{} = x // ERROR "field18 x does not escape"
 	y, _ := iface.(Y)         // Put X, but extracted Y. The cast will fail, so y is zero initialized.
 	sink = y                  // ERROR "y escapes to heap"
 }
