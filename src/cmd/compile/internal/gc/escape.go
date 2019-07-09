@@ -5,7 +5,9 @@
 package gc
 
 import (
+	"cmd/compile/internal/gc/escschema"
 	"cmd/compile/internal/types"
+	"encoding/json"
 	"fmt"
 )
 
@@ -146,7 +148,11 @@ func escapeFuncs(fns []*Node, recursive bool) {
 	}
 	e.curfn = nil
 
+	heapLocEdges := len(e.heapLoc.edges)
 	e.walkAll()
+	if Debug['m'] >= 2 {
+		e.dump(heapLocEdges)
+	}
 	e.finish()
 
 	// Record parameter tags for package export data.
@@ -1252,6 +1258,108 @@ func (l *EscLocation) leakTo(sink *EscLocation, derefs int) {
 	} else {
 		l.paramEsc = EscHeap
 	}
+}
+
+func (e *Escape) dump(heapLocEdges int) {
+	nodeIndex := make(map[*EscLocation]int, len(e.allLocs))
+	nodeIndex[&e.heapLoc] = len(nodeIndex)
+	// TODO(mdempsky): Include blankLoc?
+	for _, loc := range e.allLocs {
+		nodeIndex[loc] = len(nodeIndex)
+	}
+
+	files := []string{}
+	fileIndex := make(map[string]int)
+
+	doPos := func(n *Node) escschema.Pos {
+		if n == nil {
+			return escschema.Pos{File: -1}
+		}
+		p := Ctxt.PosTable.Pos(n.Pos)
+
+		file := p.RelFilename()
+		fileNo, ok := fileIndex[file]
+		if !ok {
+			fileNo = len(files)
+			files = append(files, file)
+			fileIndex[file] = fileNo
+		}
+
+		return escschema.Pos{
+			File:   fileNo,
+			Line:   int(p.RelLine()),
+			Column: int(p.RelCol()),
+		}
+	}
+
+	funcs := []escschema.Func{}
+	funcIndex := make(map[*Node]int)
+	doFunc := func(fn *Node) int {
+		if fn == nil {
+			return -1
+		}
+
+		if i, ok := funcIndex[fn]; ok {
+			return i
+		}
+
+		i := len(funcs)
+		funcs = append(funcs, escschema.Func{
+			// TODO(mdempsky): Check these.
+			Pos:  doPos(fn),
+			Name: fmt.Sprintf("%v", fn),
+			// TODO(mdempsky): Populate Params and Results.
+		})
+		funcIndex[fn] = i
+		return i
+	}
+
+	nodes := []escschema.Node{}
+	doNode := func(loc *EscLocation, edges []EscEdge) {
+		funcNo := doFunc(loc.curfn)
+
+		incoming := []escschema.Edge{}
+		for _, edge := range edges {
+			incoming = append(incoming, escschema.Edge{
+				// TODO(mdempsky): Pos and Why.
+				Source: nodeIndex[edge.src],
+				Derefs: edge.derefs,
+			})
+		}
+
+		nodes = append(nodes, escschema.Node{
+			Pos:      doPos(loc.n),
+			Name:     fmt.Sprintf("%v", loc.n),
+			Func:     funcNo,
+			Incoming: incoming,
+
+			LoopDepth: loc.loopDepth,
+			Escapes:   loc.escapes,
+			Transient: loc.transient,
+			ParamEsc:  nil, // TODO
+		})
+	}
+
+	doNode(&e.heapLoc, e.heapLoc.edges[:heapLocEdges])
+	for _, loc := range e.allLocs {
+		doNode(loc, loc.edges)
+	}
+
+	// TODO(mdempsky): Collect multiple graphs into single package.
+	msg, err := json.Marshal(escschema.Package{
+		Tool:  "cmd/compile 1.14",
+		Files: files,
+		Graphs: []escschema.Graph{{
+			Funcs: funcs,
+			Nodes: nodes,
+		}},
+	})
+	if err != nil {
+		Fatalf("json marshal error: %v", err)
+	}
+
+	// TODO(mdempsky): Use msg.
+	fmt.Printf("<escape>\n%s\n</escape>\n", msg)
 }
 
 func (e *Escape) finish() {
