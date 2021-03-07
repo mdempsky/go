@@ -634,7 +634,14 @@ func spanOf(p uintptr) *mspan {
 	// budget. Also, many of the checks here are safety checks
 	// that Go needs to do anyway, so the generated code is quite
 	// short.
-	ri := arenaIndex(p)
+	ha := arenaIndex(p).addr()
+	if ha == nil {
+		return nil
+	}
+	return ha.spans[(p/pageSize)%pagesPerArena]
+}
+
+func (ri arenaIdx) addr() *heapArena {
 	if arenaL1Bits == 0 {
 		// If there's no L1, then ri.l1() can't be out of bounds but ri.l2() can.
 		if ri.l2() >= uint(len(mheap_.arenas[0])) {
@@ -650,11 +657,7 @@ func spanOf(p uintptr) *mspan {
 	if arenaL1Bits != 0 && l2 == nil { // Should never happen if there's no L1.
 		return nil
 	}
-	ha := l2[ri.l2()]
-	if ha == nil {
-		return nil
-	}
-	return ha.spans[(p/pageSize)%pagesPerArena]
+	return l2[ri.l2()]
 }
 
 // spanOfUnchecked is equivalent to spanOf, but the caller must ensure
@@ -665,7 +668,7 @@ func spanOf(p uintptr) *mspan {
 //go:nosplit
 func spanOfUnchecked(p uintptr) *mspan {
 	ai := arenaIndex(p)
-	return mheap_.arenas[ai.l1()][ai.l2()].spans[(p/pageSize)%pagesPerArena]
+	return ai.addr().spans[(p/pageSize)%pagesPerArena]
 }
 
 // spanOfHeap is like spanOf, but returns nil if p does not point to a

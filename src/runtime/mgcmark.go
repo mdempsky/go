@@ -1214,7 +1214,6 @@ func scanobject(b uintptr, gcw *gcWork) {
 	// b is either the beginning of an object, in which case this
 	// is the size of the object to scan, or it points to an
 	// oblet, in which case we compute the size to scan below.
-	hbits := heapBitsForAddr(b)
 	s := spanOfUnchecked(b)
 	n := s.elemsize
 	if n == 0 {
@@ -1257,25 +1256,55 @@ func scanobject(b uintptr, gcw *gcWork) {
 		}
 	}
 
-	var i uintptr
-	for i = 0; i < n; i += sys.PtrSize {
-		// Find bits for this word.
-		if i != 0 {
-			// Avoid needless hbits.next() on last iteration.
-			hbits = hbits.next()
+	const BlockSize = 4 * sys.PtrSize * sys.PtrSize
+
+	blockaddr := b &^ (BlockSize - 1)
+	end := b + n
+	bitpOffset := (blockaddr / (sys.PtrSize * 4)) % heapArenaBitmapBytes
+	arena := arenaIndex(blockaddr)
+
+	skip := b % BlockSize
+	skippos := skip / sys.PtrSize
+	skippos += 4 * (skippos / 4)
+	skipmask := ^(uintptr(1)<<byte(skippos) - 1)
+
+	bitp := add(unsafe.Pointer(&arena.addr().bitmap), bitpOffset)
+
+	todo := (end - blockaddr) / sys.PtrSize
+	todo += 4 * (todo / 4)
+
+NextBlock:
+	// XXX: Must be little-endian load.
+	fullBits := *(*uintptr)(bitp)
+	const Mask = 0x0f0f0f0f0f0f0f0f
+
+	scanBits := ^(fullBits | Mask)
+	if scanBits != 0 {
+		scanBits = (scanBits >> 4) | (scanBits << 60)
+		scanBits &= skipmask
+		if scanBits != 0 {
+			scanLen := uintptr(sys.Ctz64(uint64(scanBits)))
+			if scanLen < todo {
+				todo = scanLen
+			}
 		}
-		// Load bits once. See CL 22712 and issue 16973 for discussion.
-		bits := hbits.bits()
-		if bits&bitScan == 0 {
-			break // no more pointers in this object
-		}
-		if bits&bitPointer == 0 {
-			continue // not a pointer
-		}
+	}
+	if todo < 8*sys.PtrSize {
+		skipmask &= 1<<byte(todo) - 1
+	}
+
+	ptrBits := fullBits & Mask
+	ptrBits &= skipmask
+
+	for ptrBits != 0 {
+		k := uintptr(sys.Ctz64(uint64(ptrBits)))
+		ptrBits &= ptrBits - 1
+		k -= 4 * (k / 8)
+		addr := blockaddr + k*sys.PtrSize
 
 		// Work here is duplicated in scanblock and above.
 		// If you make changes here, make changes there too.
-		obj := *(*uintptr)(unsafe.Pointer(b + i))
+		obj := *(*uintptr)(unsafe.Pointer(addr))
 
 		// At this point we have extracted the next potential pointer.
 		// Quickly filter out nil and pointers back to the current object.
@@ -1289,13 +1318,28 @@ func scanobject(b uintptr, gcw *gcWork) {
 			// heap. In this case, we know the object was
 			// just allocated and hence will be marked by
 			// allocation itself.
-			if obj, span, objIndex := findObject(obj, b, i); obj != 0 {
-				greyobject(obj, b, i, span, gcw, objIndex)
+			if obj, span, objIndex := findObject(obj, b, addr-b); obj != 0 {
+				greyobject(obj, b, addr-b, span, gcw, objIndex)
 			}
 		}
 	}
+
+	if todo > 8*sys.PtrSize {
+		blockaddr += BlockSize
+		todo -= 8 * sys.PtrSize
+		skipmask = ^uintptr(0)
+		if blockaddr%heapArenaBytes == 0 {
+			arena++
+			bitp = unsafe.Pointer(&arena.addr().bitmap)
+		} else {
+			bitp = add(bitp, sys.PtrSize)
+		}
+		goto NextBlock
+	}
+
+	todo -= 4 * (todo / 8)
 	gcw.bytesMarked += uint64(n)
-	gcw.scanWork += int64(i)
+	gcw.scanWork += int64(blockaddr + todo - b)
 }
 
 // scanConservative scans block [b, b+n) conservatively, treating any

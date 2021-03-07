@@ -149,7 +149,7 @@ func (w *gcWork) putFast(obj uintptr) bool {
 	wbuf := w.wbuf1
 	if wbuf == nil {
 		return false
-	} else if wbuf.nobj == len(wbuf.obj) {
+	} else if uint(wbuf.nobj) >= uint(len(wbuf.obj)) {
 		return false
 	}
 
