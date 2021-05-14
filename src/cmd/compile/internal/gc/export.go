@@ -8,6 +8,7 @@ import (
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/inline"
 	"cmd/compile/internal/ir"
+	"cmd/compile/internal/noder"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/bio"
@@ -23,21 +24,15 @@ func exportf(bout *bio.Writer, format string, args ...interface{}) {
 }
 
 func dumpexport(bout *bio.Writer) {
-	p := &exporter{marked: make(map[*types.Type]bool)}
-	for _, n := range typecheck.Target.Exports {
-		p.markObject(n)
+	// TODO(mdempsky): Reimplement this logic with pkgbits relocations.
+	if base.Debug.InlFuncsWithClosures == 0 {
+		p := &exporter{marked: make(map[*types.Type]bool)}
+		for _, n := range typecheck.Target.Exports {
+			p.markObject(n)
+		}
 	}
 
-	// The linker also looks for the $$ marker - use char after $$ to distinguish format.
-	exportf(bout, "\n$$B\n") // indicate binary export format
-	off := bout.Offset()
-	typecheck.WriteExports(bout.Writer)
-	size := bout.Offset() - off
-	exportf(bout, "\n$$\n")
-
-	if base.Debug.Export != 0 {
-		fmt.Printf("BenchmarkExportSize:%s 1 %d bytes\n", base.Ctxt.Pkgpath, size)
-	}
+	noder.WriteExportData(bout)
 }
 
 func dumpasmhdr() {

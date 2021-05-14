@@ -300,11 +300,15 @@ func (n *typeNode) CanBeNtype()       {}
 
 // TypeNode returns the Node representing the type t.
 func TypeNode(t *types.Type) Ntype {
+	return TypeNodeAt(src.NoXPos, t)
+}
+
+func TypeNodeAt(pos src.XPos, t *types.Type) Ntype {
 	if n := t.Obj(); n != nil {
 		if n.Type() != t {
 			base.Fatalf("type skew: %v has type %v, but expected %v", n, n.Type(), t)
 		}
 		return n.(Ntype)
 	}
-	return newTypeNode(src.NoXPos, t)
+	return newTypeNode(pos, t)
 }

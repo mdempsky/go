@@ -54,7 +54,7 @@ func (m *substMap) lookup(tpar *TypeParam) Type {
 }
 
 func (check *Checker) instantiate(pos syntax.Pos, typ Type, targs []Type, poslist []syntax.Pos) (res Type) {
-	if check.conf.Trace {
+	if check != nil && check.conf.Trace {
 		check.trace(pos, "-- instantiating %s with %s", typ, typeListString(targs))
 		check.indent++
 		defer func() {
@@ -115,6 +115,15 @@ func (check *Checker) instantiate(pos syntax.Pos, typ Type, targs []Type, poslis
 		return typ // nothing to do (minor optimization)
 	}
 
+	for i, tparam := range tparams {
+		if tparam.Type() != targs[i] {
+			goto rest
+		}
+	}
+	// panic("self instantiation")
+
+rest:
+
 	smap := makeSubstMap(tparams, targs)
 
 	// check bounds
@@ -130,8 +139,18 @@ func (check *Checker) instantiate(pos syntax.Pos, typ Type, targs []Type, poslis
 		}
 	}
 
-	return check.subst(pos, typ, smap)
+	depth++
+
+	if depth > 10 {
+		panic(fmt.Sprintf("%v: oops, run away recursion trying to instantiate %v with %v; smap is %v", depth, typ, targs, smap))
+	}
+
+	emad := check.subst(pos, typ, smap)
+	depth--
+	return emad
 }
+
+var depth int
 
 // satisfies reports whether the type argument targ satisfies the constraint of type parameter
 // parameter tpar (after any of its type parameters have been substituted through smap).
@@ -342,7 +361,7 @@ func (subst *subster) typ(typ Type) Type {
 		}
 
 	case *Named:
-		t.expand()
+		// t.expand()
 
 		// dump is for debugging
 		dump := func(string, ...interface{}) {}

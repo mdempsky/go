@@ -82,7 +82,12 @@ func ClosureType(clo *ir.ClosureExpr) *types.Type {
 		if !v.Byval() {
 			typ = types.NewPtr(typ)
 		}
-		fields = append(fields, types.NewField(base.Pos, v.Sym(), typ))
+		// XXX: Lookup(v.Sym().Name) was necessary here to workaround
+		// issues with "use of unexported field" errors.
+		// But probably we should generate exported names for all of the fields,
+		// if we really want them to be deduplicated.
+		// Also, maybe we should sort the closure vars?
+		fields = append(fields, types.NewField(base.Pos, Lookup(v.Sym().Name), typ))
 	}
 	typ := types.NewStruct(types.NoPkg, fields)
 	typ.SetNoalg(true)
@@ -317,7 +322,7 @@ func tcClosure(clo *ir.ClosureExpr, top int) {
 	// body in ImportedBody(), since we only want to create the named function
 	// when the closure is actually inlined (and then we force a typecheck
 	// explicitly in (*inlsubst).node()).
-	if !inTypeCheckInl {
+	if !inTypeCheckInl && fn.Nname.Sym().IsBlank() {
 		fn.Nname.SetSym(ClosureName(ir.CurFunc))
 		ir.MarkFunc(fn.Nname)
 	}

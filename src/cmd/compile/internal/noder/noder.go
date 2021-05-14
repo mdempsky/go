@@ -76,6 +76,11 @@ func LoadPackage(filenames []string) {
 	}
 	base.Timer.AddEvent(int64(lines), "lines")
 
+	if base.Flag.G == 0 || base.Flag.G > 3 || true {
+		doPkgBits(noders)
+		return
+	}
+
 	if base.Flag.G != 0 {
 		// Use types2 to type-check and possibly generate IR.
 		check2(noders)

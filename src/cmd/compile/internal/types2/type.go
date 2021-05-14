@@ -636,7 +636,10 @@ func (t *Named) Orig() *Named { return t.orig }
 
 // TParams returns the type parameters of the named type t, or nil.
 // The result is non-nil for an (originally) parameterized type even if it is instantiated.
-func (t *Named) TParams() []*TypeName { t.expand(); return t.tparams }
+func (t *Named) TParams() []*TypeName {
+	t.expand()
+	return t.tparams
+}
 
 // SetTParams sets the type parameters of the named type t.
 func (t *Named) SetTParams(tparams []*TypeName) { t.expand(); t.tparams = tparams }
@@ -836,7 +839,10 @@ func (t *Sum) Underlying() Type       { return t }
 func (t *Interface) Underlying() Type { return t }
 func (t *Map) Underlying() Type       { return t }
 func (t *Chan) Underlying() Type      { return t }
-func (t *Named) Underlying() Type     { t.expand(); return t.underlying }
+func (t *Named) Underlying() Type {
+	t.expand()
+	return t.underlying
+}
 func (t *TypeParam) Underlying() Type { return t }
 func (t *instance) Underlying() Type  { return t }
 func (t *bottom) Underlying() Type    { return t }

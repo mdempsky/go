@@ -366,34 +366,37 @@ func tcCompLit(n *ir.CompLitExpr) (res ir.Node) {
 				}
 				l := l.(*ir.StructKeyExpr)
 
-				f := Lookdot1(nil, l.Field, t, t.Fields(), 0)
+				f := l.Selection
 				if f == nil {
-					if ci := Lookdot1(nil, l.Field, t, t.Fields(), 2); ci != nil { // Case-insensitive lookup.
-						if visible(ci.Sym) {
-							base.Errorf("unknown field '%v' in struct literal of type %v (but does have %v)", l.Field, t, ci.Sym)
-						} else if nonexported(l.Field) && l.Field.Name == ci.Sym.Name { // Ensure exactness before the suggestion.
-							base.Errorf("cannot refer to unexported field '%v' in struct literal of type %v", l.Field, t)
-						} else {
-							base.Errorf("unknown field '%v' in struct literal of type %v", l.Field, t)
+					f = Lookdot1(nil, l.Field, t, t.Fields(), 0)
+					if f == nil {
+						if ci := Lookdot1(nil, l.Field, t, t.Fields(), 2); ci != nil { // Case-insensitive lookup.
+							if visible(ci.Sym) {
+								base.Errorf("unknown field '%v' in struct literal of type %v (but does have %v)", l.Field, t, ci.Sym)
+							} else if nonexported(l.Field) && l.Field.Name == ci.Sym.Name { // Ensure exactness before the suggestion.
+								base.Errorf("cannot refer to unexported field '%v' in struct literal of type %v", l.Field, t)
+							} else {
+								base.Errorf("unknown field '%v' in struct literal of type %v", l.Field, t)
+							}
+							continue
 						}
+						var f *types.Field
+						p, _ := dotpath(l.Field, t, &f, true)
+						if p == nil || f.IsMethod() {
+							base.Errorf("unknown field '%v' in struct literal of type %v", l.Field, t)
+							continue
+						}
+						// dotpath returns the parent embedded types in reverse order.
+						var ep []string
+						for ei := len(p) - 1; ei >= 0; ei-- {
+							ep = append(ep, p[ei].field.Sym.Name)
+						}
+						ep = append(ep, l.Field.Name)
+						base.Errorf("cannot use promoted field %v in struct literal of type %v", strings.Join(ep, "."), t)
 						continue
 					}
-					var f *types.Field
-					p, _ := dotpath(l.Field, t, &f, true)
-					if p == nil || f.IsMethod() {
-						base.Errorf("unknown field '%v' in struct literal of type %v", l.Field, t)
-						continue
-					}
-					// dotpath returns the parent embedded types in reverse order.
-					var ep []string
-					for ei := len(p) - 1; ei >= 0; ei-- {
-						ep = append(ep, p[ei].field.Sym.Name)
-					}
-					ep = append(ep, l.Field.Name)
-					base.Errorf("cannot use promoted field %v in struct literal of type %v", strings.Join(ep, "."), t)
-					continue
+					fielddup(f.Sym.Name, hash)
 				}
-				fielddup(f.Sym.Name, hash)
 				l.Offset = f.Offset
 
 				// No pushtype allowed here. Tried and rejected.

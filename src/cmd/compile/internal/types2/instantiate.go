@@ -9,6 +9,19 @@ import (
 	"fmt"
 )
 
+func InstantiateLazy(checker *Checker, name *TypeName, targs []Type) Type {
+	base := asNamed(name.Type())
+	if base == nil {
+		unreachable() // should have been caught by genericType
+	}
+
+	return &instance{
+		check: checker,
+		base:  base,
+		targs: targs,
+	}
+}
+
 // Instantiate instantiates the type typ with the given type arguments.
 // typ must be a *Named or a *Signature type, it must be generic, and
 // its number of type parameters must match the number of provided type

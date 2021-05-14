@@ -56,7 +56,13 @@ func checkFiles(noders []*noder, importer types2.Importer) (posMap, *types2.Pack
 		// expand as needed
 	}
 
-	pkg, err := conf.Check(base.Ctxt.Pkgpath, files, info)
+	pkg := types2.NewPackage(base.Ctxt.Pkgpath, "")
+	checker := types2.NewChecker(&conf, pkg, info)
+	if imp, ok := importer.(*importer2); ok {
+		imp.checker = checker
+	}
+	err := checker.Files(files)
+
 	base.ExitIfErrors()
 	if err != nil {
 		base.FatalfAt(src.NoXPos, "conf.Check error: %v", err)

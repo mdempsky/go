@@ -276,6 +276,9 @@ func (b *batch) initFunc(fn *ir.Func) {
 
 	// Initialize resultIndex for result parameters.
 	for i, f := range fn.Type().Results().FieldSlice() {
+		if f.Nname == nil {
+			base.FatalfAt(fn.Pos(), "func %v is missing nname for result %v %v", fn, i, f.Sym)
+		}
 		e.oldLoc(f.Nname.(*ir.Name)).resultIndex = 1 + i
 	}
 }

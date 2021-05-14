@@ -73,6 +73,8 @@ func InlinePackage() {
 	})
 }
 
+var NewSetInlBody = func(fn *ir.Func) {}
+
 // CanInline determines whether fn is inlineable.
 // If so, CanInline saves copies of fn.Body and fn.Dcl in fn.Inl.
 // fn and fn.Body will already have been typechecked.
@@ -176,11 +178,14 @@ func CanInline(fn *ir.Func) {
 	}
 
 	n.Func.Inl = &ir.Inline{
-		Cost: inlineMaxBudget - visitor.budget,
-		Dcl:  pruneUnusedAutos(n.Defn.(*ir.Func).Dcl, &visitor),
-		Body: inlcopylist(fn.Body),
-
+		Cost:            inlineMaxBudget - visitor.budget,
 		CanDelayResults: canDelayResults(fn),
+	}
+
+	NewSetInlBody(n.Func)
+	if inl := n.Func.Inl; inl.Body == nil {
+		inl.Dcl = pruneUnusedAutos(n.Defn.(*ir.Func).Dcl, &visitor)
+		inl.Body = inlcopylist(fn.Body)
 	}
 
 	if base.Flag.LowerM > 1 {
@@ -241,7 +246,6 @@ func Inline_Flood(n *ir.Name, exportsym func(*ir.Name)) {
 	if fn.Inl == nil {
 		return
 	}
-
 	if fn.ExportInline() {
 		return
 	}

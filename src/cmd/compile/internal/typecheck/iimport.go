@@ -969,6 +969,8 @@ func (r *importReader) typeExt(t *types.Type) {
 // so we can use index to reference the symbol.
 var typeSymIdx = make(map[*types.Type][2]int64)
 
+var TypeSymIdx = typeSymIdx
+
 func BaseTypeIndex(t *types.Type) int64 {
 	tbase := t
 	if t.IsPtr() && t.Sym() == nil && t.Elem().Sym() != nil {

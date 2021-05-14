@@ -326,6 +326,10 @@ type StructKeyExpr struct {
 	Field  *types.Sym
 	Value  Node
 	Offset int64
+
+	// Available for importers to bypass typechecker issues.
+	// TODO(mdempsky): Replace Field and Offset with this.
+	Selection *types.Field
 }
 
 func NewStructKeyExpr(pos src.XPos, field *types.Sym, value Node) *StructKeyExpr {

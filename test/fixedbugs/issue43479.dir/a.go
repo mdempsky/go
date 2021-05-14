@@ -25,3 +25,5 @@ var C = X.Dir
 var D = (*T).M
 var E = T.M
 var F = X.M
+
+var _ func(I, string) = I.M

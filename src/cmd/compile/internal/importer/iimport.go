@@ -73,6 +73,8 @@ const (
 
 const io_SeekCurrent = 1 // io.SeekCurrent (not defined in Go 1.4)
 
+var ImportData = iImportData
+
 // iImportData imports a package from the serialized package data
 // and returns the number of bytes consumed and a reference to the package.
 // If the export data version is not recognized or the format is otherwise

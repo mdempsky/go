@@ -204,7 +204,6 @@
 package typecheck
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/md5"
 	"encoding/binary"
@@ -264,7 +263,7 @@ const (
 	magic = 0x6742937dc293105
 )
 
-func WriteExports(out *bufio.Writer) {
+func WriteExports(out io.Writer) {
 	p := iexporter{
 		allPkgs:     map[*types.Pkg]bool{},
 		stringIndex: map[string]uint64{},
@@ -455,9 +454,13 @@ type exportWriter struct {
 	maxClosureVarIndex int
 }
 
+var lastName *ir.Name
+
 func (p *iexporter) doDecl(n *ir.Name) {
 	w := p.newWriter()
 	w.setPkg(n.Sym().Pkg, false)
+
+	lastName = n
 
 	switch n.Op() {
 	case ir.ONAME:
@@ -994,7 +997,11 @@ func (w *exportWriter) setPkg(pkg *types.Pkg, write bool) {
 	w.currPkg = pkg
 }
 
+var lastSig *types.Type
+
 func (w *exportWriter) signature(t *types.Type) {
+	lastSig = t
+
 	w.paramList(t.Params().FieldSlice())
 	w.paramList(t.Results().FieldSlice())
 	if n := t.Params().NumFields(); n > 0 {
@@ -2073,7 +2080,7 @@ func (w *exportWriter) localIdent(s *types.Sym) {
 	}
 
 	if s.Pkg != w.currPkg {
-		base.Fatalf("weird package in name: %v => %v from %q, not %q", s, name, s.Pkg.Path, w.currPkg.Path)
+		base.Errorf("weird package in name: %v => %v from %q, not %q (%v, %v)", s, name, s.Pkg.Path, w.currPkg.Path, lastName, lastSig)
 	}
 
 	w.string(name)

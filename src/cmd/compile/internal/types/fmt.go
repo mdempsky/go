@@ -324,7 +324,21 @@ func tconv2(b *bytes.Buffer, t *Type, verb rune, mode fmtMode, visited map[*Type
 			verb = 'v'
 		}
 
-		sconv2(b, t.Sym(), verb, mode)
+		sym := t.Sym()
+		if mode != fmtTypeID {
+			// The unified IR frontend adds the type generation number
+			// directly to the symbol name, instead of setting Vargen.
+			i := len(sym.Name)
+			for i > 0 && sym.Name[i-1] >= '0' && sym.Name[i-1] <= '9' {
+				i--
+			}
+			const dot = "·"
+			if i >= len(dot) && sym.Name[i-len(dot):i] == dot {
+				sym = &Sym{Pkg: sym.Pkg, Name: sym.Name[:i-len(dot)]}
+			}
+		}
+
+		sconv2(b, sym, verb, mode)
 
 		// TODO(mdempsky): Investigate including Vargen in fmtTypeIDName
 		// output too. It seems like it should, but that mode is currently

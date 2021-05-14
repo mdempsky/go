@@ -207,6 +207,7 @@ const (
 	typeDeferwidth             // width computation has been deferred and type is on deferredTypeStack
 	typeRecur
 	typeHasTParam // there is a typeparam somewhere in the type (generic function or type)
+	typeInstance  // whether the type was instantiated
 )
 
 func (t *Type) NotInHeap() bool  { return t.flags&typeNotInHeap != 0 }
@@ -215,12 +216,14 @@ func (t *Type) Noalg() bool      { return t.flags&typeNoalg != 0 }
 func (t *Type) Deferwidth() bool { return t.flags&typeDeferwidth != 0 }
 func (t *Type) Recur() bool      { return t.flags&typeRecur != 0 }
 func (t *Type) HasTParam() bool  { return t.flags&typeHasTParam != 0 }
+func (t *Type) Instance() bool   { return t.flags&typeInstance != 0 }
 
 func (t *Type) SetNotInHeap(b bool)  { t.flags.set(typeNotInHeap, b) }
 func (t *Type) SetBroke(b bool)      { t.flags.set(typeBroke, b) }
 func (t *Type) SetNoalg(b bool)      { t.flags.set(typeNoalg, b) }
 func (t *Type) SetDeferwidth(b bool) { t.flags.set(typeDeferwidth, b) }
 func (t *Type) SetRecur(b bool)      { t.flags.set(typeRecur, b) }
+func (t *Type) SetInstance(b bool)   { t.flags.set(typeInstance, b) }
 
 // Generic types should never have alg functions.
 func (t *Type) SetHasTParam(b bool) { t.flags.set(typeHasTParam, b); t.flags.set(typeNoalg, b) }
@@ -283,7 +286,7 @@ func (t *Type) SetRParams(rparams []*Type) {
 // instantiated generic type where all type arguments are non-generic or fully
 // instantiated generic types.
 func (t *Type) IsInstantiated() bool {
-	return len(t.RParams()) > 0 && !t.HasTParam()
+	return len(t.RParams()) > 0 && !t.HasTParam() || t.Instance()
 }
 
 // NoPkg is a nil *Pkg value for clarity.
