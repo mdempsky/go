@@ -122,8 +122,9 @@ func iImportData(imports map[string]*types2.Package, data []byte, path string) (
 		posBaseCache: make(map[uint64]*syntax.PosBase),
 
 		declData: declData,
-		pkgIndex: make(map[*types2.Package]map[string]uint64),
 		typCache: make(map[uint64]types2.Type),
+
+		predeclared: make(map[predeclareKey]*types2.TypeName),
 	}
 
 	for i, pt := range predeclared {
@@ -155,30 +156,16 @@ func iImportData(imports map[string]*types2.Package, data []byte, path string) (
 
 		p.pkgCache[pkgPathOff] = pkg
 
-		nameIndex := make(map[string]uint64)
 		for nSyms := r.uint64(); nSyms > 0; nSyms-- {
 			name := p.stringAt(r.uint64())
-			nameIndex[name] = r.uint64()
+			off := r.uint64()
+			p.doDecl(pkg, name, off)
 		}
 
-		p.pkgIndex[pkg] = nameIndex
 		pkgList[i] = pkg
 	}
 
 	localpkg := pkgList[0]
-
-	names := make([]string, 0, len(p.pkgIndex[localpkg]))
-	for name := range p.pkgIndex[localpkg] {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		p.doDecl(localpkg, name)
-	}
-
-	for _, typ := range p.interfaceList {
-		typ.Complete()
-	}
 
 	// record all referenced packages as imports
 	list := append(([]*types2.Package)(nil), pkgList[1:]...)
@@ -203,30 +190,39 @@ type iimporter struct {
 	posBaseCache map[uint64]*syntax.PosBase
 
 	declData []byte
-	pkgIndex map[*types2.Package]map[string]uint64
 	typCache map[uint64]types2.Type
+
+	// predeclared holds defined types before they've been declared to
+	// handle recursion during type construction.
+	predeclared map[predeclareKey]*types2.TypeName
 
 	interfaceList []*types2.Interface
 }
 
-func (p *iimporter) doDecl(pkg *types2.Package, name string) {
-	// See if we've already imported this declaration.
-	if obj := pkg.Scope().Lookup(name); obj != nil {
-		return
-	}
+type predeclareKey struct {
+	pkg  *types2.Package
+	name string
+}
 
-	off, ok := p.pkgIndex[pkg][name]
-	if !ok {
-		errorf("%v.%v not in index", pkg, name)
-	}
+func (p *iimporter) doDecl(pkg *types2.Package, name string, off uint64) {
+	pkg.Scope().InsertLazy(name, func() types2.Object {
+		r := &importReader{p: p, currPkg: pkg}
+		// Reader.Reset is not available in Go 1.4.
+		// Use bytes.NewReader for now.
+		// r.declReader.Reset(p.declData[off:])
+		r.declReader = *bytes.NewReader(p.declData[off:])
 
-	r := &importReader{p: p, currPkg: pkg}
-	// Reader.Reset is not available in Go 1.4.
-	// Use bytes.NewReader for now.
-	// r.declReader.Reset(p.declData[off:])
-	r.declReader = *bytes.NewReader(p.declData[off:])
+		obj := r.obj(name)
 
-	r.obj(name)
+		if len(p.predeclared) == 0 {
+			for _, typ := range p.interfaceList {
+				typ.Complete()
+			}
+			p.interfaceList = nil
+		}
+
+		return obj
+	})
 }
 
 func (p *iimporter) stringAt(off uint64) string {
@@ -294,7 +290,7 @@ type importReader struct {
 	prevColumn  int64
 }
 
-func (r *importReader) obj(name string) {
+func (r *importReader) obj(name string) types2.Object {
 	tag := r.byte()
 	pos := r.pos()
 
@@ -302,12 +298,12 @@ func (r *importReader) obj(name string) {
 	case 'A':
 		typ := r.typ()
 
-		r.declare(types2.NewTypeName(pos, r.currPkg, name, typ))
+		return types2.NewTypeName(pos, r.currPkg, name, typ)
 
 	case 'C':
 		typ, val := r.value()
 
-		r.declare(types2.NewConst(pos, r.currPkg, name, typ, val))
+		return types2.NewConst(pos, r.currPkg, name, typ, val)
 
 	case 'F':
 		var tparams []*types2.TypeName
@@ -317,20 +313,23 @@ func (r *importReader) obj(name string) {
 		sig := r.signature(nil)
 		sig.SetTParams(tparams)
 
-		r.declare(types2.NewFunc(pos, r.currPkg, name, sig))
+		return types2.NewFunc(pos, r.currPkg, name, sig)
 
 	case 'T':
-		var tparams []*types2.TypeName
-		if r.p.exportVersion >= iexportVersionGenerics {
-			tparams = r.tparamList()
-		}
-
 		// Types can be recursive. We need to setup a stub
 		// declaration before recursing.
 		obj := types2.NewTypeName(pos, r.currPkg, name, nil)
 		named := types2.NewNamed(obj, nil, nil)
-		named.SetTParams(tparams)
-		r.declare(obj)
+
+		key := predeclareKey{r.currPkg, name}
+		if alt := r.p.predeclared[key]; alt != nil {
+			errorf("%v already predeclared as %v", obj, alt)
+		}
+		r.p.predeclared[key] = obj
+
+		if r.p.exportVersion >= iexportVersionGenerics {
+			named.SetTParams(r.tparamList())
+		}
 
 		underlying := r.p.typAt(r.uint64(), named).Underlying()
 		named.SetUnderlying(underlying)
@@ -358,18 +357,18 @@ func (r *importReader) obj(name string) {
 			}
 		}
 
+		delete(r.p.predeclared, key)
+		return obj
+
 	case 'V':
 		typ := r.typ()
 
-		r.declare(types2.NewVar(pos, r.currPkg, name, typ))
+		return types2.NewVar(pos, r.currPkg, name, typ)
 
 	default:
 		errorf("unexpected tag: %v", tag)
+		panic("unreachable")
 	}
-}
-
-func (r *importReader) declare(obj types2.Object) {
-	obj.Pkg().Scope().Insert(obj)
 }
 
 func (r *importReader) value() (typ types2.Type, val constant.Value) {
@@ -549,7 +548,9 @@ func (r *importReader) doType(base *types2.Named) types2.Type {
 
 	case definedType:
 		pkg, name := r.qualifiedIdent()
-		r.p.doDecl(pkg, name)
+		if obj := r.p.predeclared[predeclareKey{pkg, name}]; obj != nil {
+			return obj.Type()
+		}
 		return pkg.Scope().Lookup(name).(*types2.TypeName).Type()
 	case pointerType:
 		return types2.NewPointer(r.typ())

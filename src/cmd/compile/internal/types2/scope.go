@@ -13,6 +13,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // A Scope maintains a set of objects and links to its containing
@@ -66,7 +67,7 @@ func (s *Scope) Child(i int) *Scope { return s.children[i] }
 // Lookup returns the object in scope s with the given name if such an
 // object exists; otherwise the result is nil.
 func (s *Scope) Lookup(name string) Object {
-	return s.elems[name]
+	return resolve(name, s.elems[name])
 }
 
 // LookupParent follows the parent chain of scopes starting with s until
@@ -81,7 +82,7 @@ func (s *Scope) Lookup(name string) Object {
 // whose scope is the scope of the package that exported them.
 func (s *Scope) LookupParent(name string, pos syntax.Pos) (*Scope, Object) {
 	for ; s != nil; s = s.parent {
-		if obj := s.elems[name]; obj != nil && (!pos.IsKnown() || obj.scopePos().Cmp(pos) <= 0) {
+		if obj := s.Lookup(name); obj != nil && (!pos.IsKnown() || obj.scopePos().Cmp(pos) <= 0) {
 			return s, obj
 		}
 	}
@@ -95,17 +96,36 @@ func (s *Scope) LookupParent(name string, pos syntax.Pos) (*Scope, Object) {
 // if not already set, and returns nil.
 func (s *Scope) Insert(obj Object) Object {
 	name := obj.Name()
-	if alt := s.elems[name]; alt != nil {
+	if alt := s.Lookup(name); alt != nil {
 		return alt
 	}
-	if s.elems == nil {
-		s.elems = make(map[string]Object)
-	}
-	s.elems[name] = obj
+	s.insert(name, obj)
 	if obj.Parent() == nil {
 		obj.setParent(s)
 	}
 	return nil
+}
+
+// InsertLazy is like Insert, but allows deferring construction of the
+// inserted object until it's accessed with Lookup. The Object
+// returned by resolve must have the same name as given to InsertLazy.
+// If s already contains an alternative object with the same name,
+// InsertLazy leaves s unchanged and returns false. Otherwise it
+// records the binding and returns true. The object's parent scope
+// will be set to s after resolve is called.
+func (s *Scope) InsertLazy(name string, resolve func() Object) bool {
+	if s.elems[name] != nil {
+		return false
+	}
+	s.insert(name, &lazyObject{parent: s, resolve: resolve})
+	return true
+}
+
+func (s *Scope) insert(name string, obj Object) {
+	if s.elems == nil {
+		s.elems = make(map[string]Object)
+	}
+	s.elems[name] = obj
 }
 
 // Squash merges s with its parent scope p by adding all
@@ -117,7 +137,8 @@ func (s *Scope) Insert(obj Object) Object {
 func (s *Scope) Squash(err func(obj, alt Object)) {
 	p := s.parent
 	assert(p != nil)
-	for _, obj := range s.elems {
+	for name, obj := range s.elems {
+		obj = resolve(name, obj)
 		obj.setParent(nil)
 		if alt := p.Insert(obj); alt != nil {
 			err(obj, alt)
@@ -196,7 +217,7 @@ func (s *Scope) WriteTo(w io.Writer, n int, recurse bool) {
 
 	indn1 := indn + ind
 	for _, name := range s.Names() {
-		fmt.Fprintf(w, "%s%s\n", indn1, s.elems[name])
+		fmt.Fprintf(w, "%s%s\n", indn1, s.Lookup(name))
 	}
 
 	if recurse {
@@ -214,3 +235,52 @@ func (s *Scope) String() string {
 	s.WriteTo(&buf, 0, false)
 	return buf.String()
 }
+
+type lazyObject struct {
+	parent  *Scope
+	resolve func() Object
+	obj     Object
+	once    sync.Once
+}
+
+func resolve(name string, obj Object) Object {
+	if lazy, ok := obj.(*lazyObject); ok {
+		lazy.once.Do(func() {
+			obj := lazy.resolve()
+
+			if _, ok := obj.(*lazyObject); ok {
+				panic("recursive lazy object")
+			}
+			if obj.Name() != name {
+				panic("lazy object has unexpected name")
+			}
+
+			if obj.Parent() == nil {
+				obj.setParent(lazy.parent)
+			}
+			lazy.obj = obj
+		})
+
+		obj = lazy.obj
+	}
+	return obj
+}
+
+// stub implementations so *lazyObject implements Object.
+func (*lazyObject) Parent() *Scope                        { panic("unimplemented") }
+func (*lazyObject) Pos() syntax.Pos                       { panic("unimplemented") }
+func (*lazyObject) Pkg() *Package                         { panic("unimplemented") }
+func (*lazyObject) Name() string                          { panic("unimplemented") }
+func (*lazyObject) Type() Type                            { panic("unimplemented") }
+func (*lazyObject) Exported() bool                        { panic("unimplemented") }
+func (*lazyObject) Id() string                            { panic("unimplemented") }
+func (*lazyObject) String() string                        { panic("unimplemented") }
+func (*lazyObject) order() uint32                         { panic("unimplemented") }
+func (*lazyObject) color() color                          { panic("unimplemented") }
+func (*lazyObject) setType(Type)                          { panic("unimplemented") }
+func (*lazyObject) setOrder(uint32)                       { panic("unimplemented") }
+func (*lazyObject) setColor(color color)                  { panic("unimplemented") }
+func (*lazyObject) setParent(*Scope)                      { panic("unimplemented") }
+func (*lazyObject) sameId(pkg *Package, name string) bool { panic("unimplemented") }
+func (*lazyObject) scopePos() syntax.Pos                  { panic("unimplemented") }
+func (*lazyObject) setScopePos(pos syntax.Pos)            { panic("unimplemented") }
