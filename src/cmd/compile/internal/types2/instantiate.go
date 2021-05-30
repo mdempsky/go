@@ -23,7 +23,7 @@ func Instantiate(pos syntax.Pos, typ Type, targs []Type) (res Type) {
 	var tparams []*TypeName
 	switch t := typ.(type) {
 	case *Named:
-		tparams = t.tparams
+		tparams = t.TParams()
 	case *Signature:
 		tparams = t.tparams
 		defer func() {

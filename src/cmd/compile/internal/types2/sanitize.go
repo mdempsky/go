@@ -134,6 +134,7 @@ func (s sanitizer) typ(typ Type) Type {
 		}
 
 	case *Named:
+		t.expand()
 		if debug && t.check != nil {
 			panic("internal error: Named.check != nil")
 		}

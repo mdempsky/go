@@ -123,8 +123,6 @@ func iImportData(imports map[string]*types2.Package, data []byte, path string) (
 
 		declData: declData,
 		typCache: make(map[uint64]types2.Type),
-
-		predeclared: make(map[predeclareKey]*types2.TypeName),
 	}
 
 	for i, pt := range predeclared {
@@ -191,17 +189,6 @@ type iimporter struct {
 
 	declData []byte
 	typCache map[uint64]types2.Type
-
-	// predeclared holds defined types before they've been declared to
-	// handle recursion during type construction.
-	predeclared map[predeclareKey]*types2.TypeName
-
-	interfaceList []*types2.Interface
-}
-
-type predeclareKey struct {
-	pkg  *types2.Package
-	name string
 }
 
 func (p *iimporter) doDecl(pkg *types2.Package, name string, off uint64) {
@@ -212,16 +199,7 @@ func (p *iimporter) doDecl(pkg *types2.Package, name string, off uint64) {
 		// r.declReader.Reset(p.declData[off:])
 		r.declReader = *bytes.NewReader(p.declData[off:])
 
-		obj := r.obj(name)
-
-		if len(p.predeclared) == 0 {
-			for _, typ := range p.interfaceList {
-				typ.Complete()
-			}
-			p.interfaceList = nil
-		}
-
-		return obj
+		return r.obj(name)
 	})
 }
 
@@ -316,49 +294,39 @@ func (r *importReader) obj(name string) types2.Object {
 		return types2.NewFunc(pos, r.currPkg, name, sig)
 
 	case 'T':
-		// Types can be recursive. We need to setup a stub
-		// declaration before recursing.
-		obj := types2.NewTypeName(pos, r.currPkg, name, nil)
-		named := types2.NewNamed(obj, nil, nil)
-
-		key := predeclareKey{r.currPkg, name}
-		if alt := r.p.predeclared[key]; alt != nil {
-			errorf("%v already predeclared as %v", obj, alt)
-		}
-		r.p.predeclared[key] = obj
-
-		if r.p.exportVersion >= iexportVersionGenerics {
-			named.SetTParams(r.tparamList())
-		}
-
-		underlying := r.p.typAt(r.uint64(), named).Underlying()
-		named.SetUnderlying(underlying)
-
-		if !isInterface(underlying) {
-			for n := r.uint64(); n > 0; n-- {
-				mpos := r.pos()
-				mname := r.ident()
-				recv := r.param()
-				msig := r.signature(recv)
-
-				// If the receiver has any targs, set those as the
-				// rparams of the method (since those are the
-				// typeparams being used in the method sig/body).
-				targs := baseType(msig.Recv().Type()).TArgs()
-				if len(targs) > 0 {
-					rparams := make([]*types2.TypeName, len(targs))
-					for i, targ := range targs {
-						rparams[i] = types2.AsTypeParam(targ).Obj()
-					}
-					msig.SetRParams(rparams)
-				}
-
-				named.AddMethod(types2.NewFunc(mpos, r.currPkg, mname, msig))
+		return types2.NewTypeNameLazy(pos, r.currPkg, name, func(named *types2.Named) (tparams []*types2.TypeName, underlying types2.Type, methods []*types2.Func) {
+			if r.p.exportVersion >= iexportVersionGenerics {
+				tparams = r.tparamList()
 			}
-		}
 
-		delete(r.p.predeclared, key)
-		return obj
+			underlying = r.p.typAt(r.uint64(), named).Underlying()
+
+			if !isInterface(underlying) {
+				methods = make([]*types2.Func, r.uint64())
+				for i := range methods {
+					mpos := r.pos()
+					mname := r.ident()
+					recv := r.param()
+					msig := r.signature(recv)
+
+					// If the receiver has any targs, set those as the
+					// rparams of the method (since those are the
+					// typeparams being used in the method sig/body).
+					targs := baseType(msig.Recv().Type()).TArgs()
+					if len(targs) > 0 {
+						rparams := make([]*types2.TypeName, len(targs))
+						for i, targ := range targs {
+							rparams[i] = types2.AsTypeParam(targ).Obj()
+						}
+						msig.SetRParams(rparams)
+					}
+
+					methods[i] = types2.NewFunc(mpos, r.currPkg, mname, msig)
+				}
+			}
+
+			return
+		})
 
 	case 'V':
 		typ := r.typ()
@@ -548,9 +516,6 @@ func (r *importReader) doType(base *types2.Named) types2.Type {
 
 	case definedType:
 		pkg, name := r.qualifiedIdent()
-		if obj := r.p.predeclared[predeclareKey{pkg, name}]; obj != nil {
-			return obj.Type()
-		}
 		return pkg.Scope().Lookup(name).(*types2.TypeName).Type()
 	case pointerType:
 		return types2.NewPointer(r.typ())
@@ -611,7 +576,7 @@ func (r *importReader) doType(base *types2.Named) types2.Type {
 		}
 
 		typ := types2.NewInterfaceType(methods, embeddeds)
-		r.p.interfaceList = append(r.p.interfaceList, typ)
+		typ.Complete()
 		return typ
 
 	case typeParamType:
